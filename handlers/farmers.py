@@ -48,8 +48,9 @@ async def send_page(target, page, district_index, edit):
     text = build_page_text(
         title=f"📋 Фермер Баланс: {district_title}",
         headers=f"{'№':<3} {'Фермер номи':<18} {'Баланс':>13}",
+        subheaders=f"{' ':<3} {' ':<18} {'(млн)':>13}",
         rows=[
-            f"{index:<3} {farmer['name'][:18]:<18} {float(farmer['balance']):>13,.1f}"
+            f"{index:<3} {farmer['name'][:18]:<18} {float(farmer['balance']) / 1_000_000:>13,.1f}"
             for index, farmer in enumerate(page_data, start=start + 1)
         ],
     )
