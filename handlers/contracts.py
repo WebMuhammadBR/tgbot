@@ -46,14 +46,14 @@ async def send_page(target, page, district_index, edit):
 
     text = build_page_text(
         title=f"📑 Шартномалар: {district_title}",
-        headers=f"{'№':<3} {'Фермер номи':<14} {'миқдор':>5} {'Сумма':>8}",
-        subheaders=f"{' ':<3} {'   ':<15} {'(тн)':>5} {'(млн)':>9}",
+        headers=f"{'№':<3} {'Фермер номи':<14} {'миқдор':>8} {'Сумма':>8}",
+        subheaders=f"{' ':<3} {'   ':<15} {'(минг)':>8} {'(млн)':>9}",
         rows=[
             (
                 f"{index:<3} "
                 f"{contract['name'][:15]:<15} "
-                f"{float(contract['quantity']):>5,.1f}"
-                f"{float(contract['amount']):>12,.0f}"
+                f"{float(contract['quantity']) / 1_000:>8,.1f}"
+                f"{float(contract['amount']) / 1_000_000:>12,.1f}"
             )
             for index, contract in enumerate(page_data, start=start + 1)
         ],
