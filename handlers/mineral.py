@@ -1,6 +1,6 @@
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
-from datetime import datetime
+from datetime import date, datetime
 
 from excel_export import warehouse_expenses_to_excel, warehouse_receipts_to_excel
 from keyboards import (
@@ -26,6 +26,7 @@ USER_SELECTED_WAREHOUSE: dict[int, int] = {}
 
 WAREHOUSE_RECEIPT_NAMES = {"📥 Кирим", "kirim", "krim", "кирим"}
 WAREHOUSE_EXPENSE_NAMES = {"📤 Чиқим", "chiqim", "чиқим"}
+WAREHOUSE_REPORT_NAMES = {"📊 Свод", "svod", "свод"}
 
 
 def _format_date_ddmmyyyy(value) -> str:
@@ -47,6 +48,45 @@ def _format_date_ddmmyyyy(value) -> str:
             continue
 
     return date_text[:10]
+
+def _date_key(value) -> str:
+    if not value:
+        return ""
+
+    date_text = str(value).strip()
+    normalized = date_text.replace("Z", "+00:00")
+
+    try:
+        return datetime.fromisoformat(normalized).strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+
+    for date_format in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(date_text[:10], date_format).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    return date_text[:10]
+
+
+def _report_rows_by_district(items: list[dict]) -> list[dict]:
+    today_key = date.today().strftime("%Y-%m-%d")
+    district_totals: dict[str, dict] = {}
+
+    for item in items:
+        district_name = (item.get("district_name") or "-").strip() or "-"
+        quantity = float(item.get("quantity") or 0)
+        record = district_totals.setdefault(
+            district_name,
+            {"district_name": district_name, "today_quantity": 0.0, "total_quantity": 0.0},
+        )
+        record["total_quantity"] += quantity
+
+        if _date_key(item.get("date")) == today_key:
+            record["today_quantity"] += quantity
+
+    return sorted(district_totals.values(), key=lambda row: row["district_name"])
 
 
 async def _warehouse_map():
@@ -108,6 +148,34 @@ async def warehouse_receipt_products_handler(message: Message):
     )
 
 
+
+
+@router.message(F.text.func(lambda value: value and value.lower() in {name.lower() for name in WAREHOUSE_REPORT_NAMES}))
+@access_required
+async def warehouse_report_districts_handler(message: Message):
+    warehouse_map = await _warehouse_map()
+    warehouse_id = USER_SELECTED_WAREHOUSE.get(message.from_user.id)
+    if not warehouse_id:
+        await message.answer("Аввал омборни танланг", reply_markup=warehouse_names_menu(list(warehouse_map.values())))
+        return
+
+    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    products = await get_warehouse_products(warehouse_id=warehouse_id, movement="out")
+    if not products:
+        await message.answer(f"🏬 {warehouse_name}\n\n📊 Свод бўйича маълумот топилмади.")
+        return
+
+    await message.answer(
+        f"🏬 {warehouse_name}\n📊 Свод учун маҳсулотни танланг:",
+        reply_markup=warehouse_products_inline_keyboard(
+            warehouse_id=warehouse_id,
+            movement="report",
+            products=products,
+            back_callback=f"warehouse_back_sections:{warehouse_id}",
+        ),
+    )
+
+
 @router.message(F.text.func(lambda value: value and value.lower() in {name.lower() for name in WAREHOUSE_EXPENSE_NAMES}))
 @access_required
 async def warehouse_expense_districts_handler(message: Message):
@@ -125,7 +193,7 @@ async def warehouse_expense_districts_handler(message: Message):
 
     await message.answer(
         f"🏬 {warehouse_name}\n📤 Чиқим учун туманни танланг:",
-        reply_markup=warehouse_expense_districts_inline_keyboard(warehouse_id, districts),
+        reply_markup=warehouse_expense_districts_inline_keyboard(warehouse_id, districts, section="out"),
     )
 
 
@@ -165,16 +233,17 @@ async def warehouse_back_sections_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("warehouse_expense_district:"))
 @access_required
 async def warehouse_expense_district_handler(callback: CallbackQuery):
-    _, warehouse_id, district_id = callback.data.split(":", maxsplit=2)
+    _, warehouse_id, district_id, section = callback.data.split(":", maxsplit=3)
     warehouse_id = int(warehouse_id)
     district_id = int(district_id)
 
     warehouse_map = await _warehouse_map()
     warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    movement = "report" if section == "report" else "out"
     await _send_warehouse_products_page(
         message=callback.message,
         warehouse_id=warehouse_id,
-        movement="out",
+        movement=movement,
         district_id=district_id,
         warehouse_name=warehouse_name,
     )
@@ -184,15 +253,21 @@ async def warehouse_expense_district_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("warehouse_back_to_districts:"))
 @access_required
 async def warehouse_back_to_districts_handler(callback: CallbackQuery):
-    _, warehouse_id = callback.data.split(":", maxsplit=1)
-    warehouse_id = int(warehouse_id)
+    parts = callback.data.split(":", maxsplit=2)
+    warehouse_id = int(parts[1])
+    section = parts[2] if len(parts) > 2 else "out"
     warehouse_map = await _warehouse_map()
     warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
     districts = await get_warehouse_expense_districts(warehouse_id=warehouse_id)
 
+    if section == "report":
+        title = "📊 Свод учун туманни танланг:"
+    else:
+        title = "📤 Чиқим учун туманни танланг:"
+
     await callback.message.edit_text(
-        f"🏬 {warehouse_name}\n📤 Чиқим учун туманни танланг:",
-        reply_markup=warehouse_expense_districts_inline_keyboard(warehouse_id, districts),
+        f"🏬 {warehouse_name}\n{title}",
+        reply_markup=warehouse_expense_districts_inline_keyboard(warehouse_id, districts, section=section),
     )
     await callback.answer()
 
@@ -200,7 +275,7 @@ async def warehouse_back_to_districts_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("warehouse_back_to_products:"))
 @access_required
 async def warehouse_back_to_products_handler(callback: CallbackQuery):
-    _, warehouse_id, movement, district_id = callback.data.split(":", maxsplit=3)
+    _, warehouse_id, movement, district_id, section = callback.data.split(":", maxsplit=4)
     warehouse_id = int(warehouse_id)
     district_id = int(district_id)
 
@@ -228,6 +303,9 @@ async def warehouse_product_handler(callback: CallbackQuery):
     if movement.startswith("out_d"):
         actual_movement = "out"
         district_id = int(movement.removeprefix("out_d"))
+    elif movement.startswith("report_d"):
+        actual_movement = "report"
+        district_id = int(movement.removeprefix("report_d"))
 
     await _send_warehouse_movements_page(
         message=callback.message,
@@ -279,7 +357,7 @@ async def _send_warehouse_movements_page(
 
     products = await get_warehouse_products(
         warehouse_id=warehouse_id,
-        movement=movement,
+        movement="out" if movement == "report" else movement,
         district_id=None if district_id == 0 else district_id,
     )
     product_name = next(
@@ -303,14 +381,15 @@ async def _send_warehouse_movements_page(
 
     if movement == "in":
         lines.append("📥 Кирим деталлари:")
-        lines.append(f"{'Сана':<12} {'Нак-№':<5} {'Миқдори':>10}")
-        lines.append("-" * 28)
+        lines.append(f"{'Сана':<12} {'Нак-№':<8} {'Қоп сони':>9} {'Миқдори':>10}")
+        lines.append("-" * 44)
         for item in page_items:
             date_text = _format_date_ddmmyyyy(item.get("date"))
             invoice_number = str(item.get("invoice_number") or "-")
+            bag_count = f"{int(item.get('bag_count') or 0)}"
             quantity = f"{float(item.get('quantity') or 0):.0f}"
-            lines.append(f"{date_text:<14} {invoice_number:<7} {quantity:>5}")
-    else:
+            lines.append(f"{date_text:<14} {invoice_number:<8} {bag_count:>9} {quantity:>10}")
+    elif movement == "out":
         lines.append("📤 Чиқим деталлари:")
         lines.append(f"{'№':<3} {'Фермер номи':<16} {'Миқдори':>8} {'Га/кг':>6}")
         lines.append("-" * 37)
@@ -319,10 +398,29 @@ async def _send_warehouse_movements_page(
             quantity = f"{float(item.get('quantity') or 0):.0f}"
             per_area = f"{float(item.get('quantity_per_area') or 0):.0f}"
             lines.append(f"{index:<3} {farmer_name:<16} {quantity:>8} {per_area:>6}")
+    else:
+        report_rows = _report_rows_by_district(movements)
+        page_items = report_rows[start:end]
+        total_today_quantity = sum(float(item.get("today_quantity") or 0) for item in report_rows)
+        total_quantity = sum(float(item.get("total_quantity") or 0) for item in report_rows)
+        lines.append("📊 Свод деталлари:")
+        today_title = date.today().strftime("%d.%m.%Y")
+        lines.append(f"{'№':<3} {'Туман':<16} {'Бир кунда':>10} {'Миқдори':>10}")
+        lines.append(f"{'':<20} {'(' + today_title + ')':>10}")
+        lines.append("-" * 46)
+        for index, item in enumerate(page_items, start=start + 1):
+            district_name = (item.get("district_name") or "-")[:16]
+            today_quantity = f"{float(item.get('today_quantity') or 0):.0f}"
+            district_total_quantity = f"{float(item.get('total_quantity') or 0):.0f}"
+            lines.append(f"{index:<3} {district_name:<16} {today_quantity:>10} {district_total_quantity:>10}")
+
+        lines.append("-" * 46)
+        lines.append(f"{'':<3} {'Жами':<16} {total_today_quantity:>10.0f} {total_quantity:>10.0f}")
 
     content = "\n".join(lines)
 
-    back_callback = f"warehouse_back_to_products:{warehouse_id}:{movement}:{district_id}"
+    section = "report" if movement == "report" else movement
+    back_callback = f"warehouse_back_to_products:{warehouse_id}:{movement}:{district_id}:{section}"
 
     keyboard = warehouse_movements_pagination_keyboard(
         warehouse_id=warehouse_id,
@@ -330,7 +428,7 @@ async def _send_warehouse_movements_page(
         product_id=product_id,
         district_id=district_id,
         page=page,
-        has_next=end < len(movements),
+        has_next=end < (len(report_rows) if movement == "report" else len(movements)),
         back_callback=back_callback,
     )
     await message.edit_text(f"<pre>{content}</pre>", parse_mode="HTML", reply_markup=keyboard)
@@ -340,26 +438,38 @@ async def _send_warehouse_products_page(message, warehouse_id: int, movement: st
     district_filter = None if district_id == 0 else district_id
     products = await get_warehouse_products(
         warehouse_id=warehouse_id,
-        movement=movement,
+        movement="out" if movement == "report" else movement,
         district_id=district_filter,
     )
 
     if not products:
         if movement == "in":
             await message.edit_text(f"🏬 {warehouse_name}\n\n📥 Кирим бўйича маълумот топилмади.")
-        else:
+        elif movement == "out":
             await message.edit_text(f"🏬 {warehouse_name}\n\n📤 Чиқим бўйича маълумот топилмади.")
+        else:
+            await message.edit_text(f"🏬 {warehouse_name}\n\n📊 Свод бўйича маълумот топилмади.")
         return
 
-    movement_token = f"out_d{district_id}" if movement == "out" else "in"
+    movement_token = "in"
+    section = "in"
+    if movement == "out":
+        movement_token = f"out_d{district_id}"
+        section = "out"
+    elif movement == "report":
+        movement_token = "report"
+        section = "report"
+
     back_callback = (
         f"warehouse_back_sections:{warehouse_id}"
-        if movement == "in"
-        else f"warehouse_back_to_districts:{warehouse_id}"
+        if movement in {"in", "report"}
+        else f"warehouse_back_to_districts:{warehouse_id}:{section}"
     )
 
+    section_title = "📥 Кирим" if movement == "in" else ("📤 Чиқим" if movement == "out" else "📊 Свод")
+
     await message.edit_text(
-        f"🏬 {warehouse_name}\n{'📥 Кирим' if movement == 'in' else '📤 Чиқим'} учун маҳсулотни танланг:",
+        f"🏬 {warehouse_name}\n{section_title} учун маҳсулотни танланг:",
         reply_markup=warehouse_products_inline_keyboard(
             warehouse_id,
             movement_token,
@@ -374,8 +484,9 @@ async def _send_warehouse_products_page(message, warehouse_id: int, movement: st
 async def warehouse_export_filtered_handler(callback: CallbackQuery):
     _, warehouse_id, movement, product_id, district_id = callback.data.split(":", maxsplit=4)
 
+    actual_movement = movement
     data = await get_warehouse_movements(
-        movement=movement,
+        movement=actual_movement,
         warehouse_id=int(warehouse_id),
         product_id=int(product_id),
         district_id=None if int(district_id) == 0 else int(district_id),
@@ -384,6 +495,9 @@ async def warehouse_export_filtered_handler(callback: CallbackQuery):
     if movement == "in":
         file_buffer = await warehouse_receipts_to_excel(data)
         filename = "warehouse_receipts.xlsx"
+    elif movement == "report":
+        file_buffer = await warehouse_expenses_to_excel(_report_rows_by_district(data), mode="report")
+        filename = "warehouse_report.xlsx"
     else:
         file_buffer = await warehouse_expenses_to_excel(data)
         filename = "warehouse_expenses.xlsx"
@@ -407,6 +521,9 @@ async def warehouse_export_handler(callback: CallbackQuery):
     if movement.startswith("out_d"):
         actual_movement = "out"
         district_id = int(movement.removeprefix("out_d"))
+    elif movement.startswith("report_d"):
+        actual_movement = "report"
+        district_id = int(movement.removeprefix("report_d"))
 
     data = await get_warehouse_movements(
         movement=actual_movement,
@@ -417,6 +534,9 @@ async def warehouse_export_handler(callback: CallbackQuery):
     if actual_movement == "in":
         file_buffer = await warehouse_receipts_to_excel(data)
         filename = "warehouse_receipts.xlsx"
+    elif actual_movement == "report":
+        file_buffer = await warehouse_expenses_to_excel(_report_rows_by_district(data), mode="report")
+        filename = "warehouse_report.xlsx"
     else:
         file_buffer = await warehouse_expenses_to_excel(data)
         filename = "warehouse_expenses.xlsx"

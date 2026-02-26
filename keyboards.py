@@ -24,6 +24,7 @@ warehouse_menu = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="📥 Кирим"),
+            KeyboardButton(text="📊 Свод"),
             KeyboardButton(text="📤 Чиқим"),
         ],
         [KeyboardButton(text="🏠 Асосий меню")],
@@ -43,6 +44,7 @@ def warehouse_movement_menu():
         keyboard=[
             [
                 KeyboardButton(text="📥 Кирим"),
+                KeyboardButton(text="📊 Свод"),
                 KeyboardButton(text="📤 Чиқим"),
             ],
             [KeyboardButton(text="⬅️ Омборлар рўйхати")],
@@ -149,12 +151,12 @@ def contracts_pagination_keyboard(page: int, has_next: bool, district_index: int
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def warehouse_expense_districts_inline_keyboard(warehouse_id: int, districts: list[dict]):
+def warehouse_expense_districts_inline_keyboard(warehouse_id: int, districts: list[dict], section: str = "out"):
     buttons = [
         [
             InlineKeyboardButton(
                 text="📊 Умумий",
-                callback_data=f"warehouse_expense_district:{warehouse_id}:0",
+                callback_data=f"warehouse_expense_district:{warehouse_id}:0:{section}",
             )
         ]
     ]
@@ -169,7 +171,7 @@ def warehouse_expense_districts_inline_keyboard(warehouse_id: int, districts: li
             [
                 InlineKeyboardButton(
                     text=str(district_name),
-                    callback_data=f"warehouse_expense_district:{warehouse_id}:{district_id}",
+                    callback_data=f"warehouse_expense_district:{warehouse_id}:{district_id}:{section}",
                 )
             ]
         )

@@ -1,7 +1,31 @@
 #11111111111111111111111111
 from io import BytesIO
+from datetime import datetime
 import pandas as pd
 from openpyxl.styles import Font
+
+
+
+
+def _excel_date(value):
+    if not value:
+        return "-"
+
+    date_text = str(value).strip()
+    normalized = date_text.replace("Z", "+00:00")
+
+    try:
+        return datetime.fromisoformat(normalized).strftime("%d.%m.%Y")
+    except ValueError:
+        pass
+
+    for date_format in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(date_text[:10], date_format).strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+
+    return date_text[:10]
 
 
 def _autosize_and_bold(worksheet):
@@ -102,16 +126,27 @@ async def warehouse_receipts_to_excel(data: list[dict]):
     return buffer
 
 
-async def warehouse_expenses_to_excel(data: list[dict]):
+async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
     if not data:
         return None
 
     formatted = []
     for index, item in enumerate(data, start=1):
+        if mode == "report":
+            formatted.append(
+                {
+                    "№": index,
+                    "Туман": item.get("district_name") or "-",
+                    f"Бир кунда ({datetime.now().strftime('%d.%m.%Y')})": float(item.get("today_quantity") or 0),
+                    "Миқдори (умумий)": float(item.get("total_quantity") or item.get("quantity") or 0),
+                }
+            )
+            continue
+
         formatted.append(
             {
                 "№": index,
-                "Сана": item.get("date") or "-",
+                "Сана": _excel_date(item.get("date")),
                 "Ҳужжат №": item.get("number") or "-",
                 "Фермер": item.get("farmer_name") or "-",
                 "Маҳсулот": item.get("product_name") or "-",
