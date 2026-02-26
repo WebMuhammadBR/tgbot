@@ -108,13 +108,36 @@ async def warehouse_expenses_to_excel(data: list[dict]):
 
     formatted = []
     for index, item in enumerate(data, start=1):
+        date_value = item.get("date") or item.get("created_at") or item.get("sana") or ""
+        document_number = (
+            item.get("number")
+            or item.get("invoice_number")
+            or item.get("document_number")
+            or item.get("hujjat")
+            or ""
+        )
+        product_name = (
+            item.get("product_name")
+            or item.get("product")
+            or item.get("mahsulot")
+            or item.get("product__name")
+            or ""
+        )
+        farmer_or_district = (
+            item.get("farmer_name")
+            or item.get("farmer")
+            or item.get("district_name")
+            or item.get("district")
+            or ""
+        )
+
         formatted.append(
             {
                 "№": index,
-                "Сана": item.get("date") or "-",
-                "Ҳужжат №": item.get("number") or "-",
-                "Фермер": item.get("farmer_name") or "-",
-                "Маҳсулот": item.get("product_name") or "-",
+                "Сана": date_value or "-",
+                "Ҳужжат №": document_number or "-",
+                "Фермер": farmer_or_district or "-",
+                "Маҳсулот": product_name or "-",
                 "Миқдор": float(item.get("quantity") or 0),
                 "Га/кг": round(float(item.get("quantity_per_area") or 0)),
             }
