@@ -43,6 +43,7 @@ def warehouse_movement_menu():
         keyboard=[
             [
                 KeyboardButton(text="📥 Кирим"),
+                KeyboardButton(text="📊 Свод"),
                 KeyboardButton(text="📤 Чиқим"),
             ],
             [KeyboardButton(text="⬅️ Омборлар рўйхати")],
@@ -262,4 +263,25 @@ def warehouse_movements_pagination_keyboard(
 
     buttons.append([InlineKeyboardButton(text="⬅️ Орқага", callback_data=back_callback)])
 
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def warehouse_svod_products_inline_keyboard(warehouse_id: int, products: list[dict], back_callback: str):
+    buttons = []
+    for item in products:
+        product_id = item.get("product_id")
+        product_name = item.get("product_name")
+        if not product_id or not product_name:
+            continue
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=str(product_name),
+                    callback_data=f"warehouse_svod_product:{warehouse_id}:{product_id}",
+                )
+            ]
+        )
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Орқага", callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
