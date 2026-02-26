@@ -10,6 +10,7 @@ from keyboards import (
     warehouse_names_menu,
     warehouse_movements_pagination_keyboard,
     warehouse_products_inline_keyboard,
+    warehouse_svod_products_inline_keyboard,
 )
 from middlewares.access import access_required
 from services.api_client import (
@@ -25,6 +26,7 @@ PER_PAGE = 25
 USER_SELECTED_WAREHOUSE: dict[int, int] = {}
 
 WAREHOUSE_RECEIPT_NAMES = {"📥 Кирим", "kirim", "krim", "кирим"}
+WAREHOUSE_SUMMARY_NAMES = {"📊 Свод", "svod", "свод"}
 WAREHOUSE_EXPENSE_NAMES = {"📤 Чиқим", "chiqim", "чиқим"}
 
 
@@ -107,6 +109,32 @@ async def warehouse_receipt_products_handler(message: Message):
         ),
     )
 
+
+
+
+@router.message(F.text.func(lambda value: value and value.lower() in {name.lower() for name in WAREHOUSE_SUMMARY_NAMES}))
+@access_required
+async def warehouse_summary_products_handler(message: Message):
+    warehouse_map = await _warehouse_map()
+    warehouse_id = USER_SELECTED_WAREHOUSE.get(message.from_user.id)
+    if not warehouse_id:
+        await message.answer("Аввал омборни танланг", reply_markup=warehouse_names_menu(list(warehouse_map.values())))
+        return
+
+    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    products = await get_warehouse_products(warehouse_id=warehouse_id, movement="out")
+    if not products:
+        await message.answer(f"🏬 {warehouse_name}\n\n📊 Свод учун маҳсулотлар топилмади.")
+        return
+
+    await message.answer(
+        f"🏬 {warehouse_name}\n📊 Свод учун маҳсулотни танланг:",
+        reply_markup=warehouse_svod_products_inline_keyboard(
+            warehouse_id=warehouse_id,
+            products=products,
+            back_callback=f"warehouse_back_sections:{warehouse_id}",
+        ),
+    )
 
 @router.message(F.text.func(lambda value: value and value.lower() in {name.lower() for name in WAREHOUSE_EXPENSE_NAMES}))
 @access_required
@@ -216,6 +244,62 @@ async def warehouse_back_to_products_handler(callback: CallbackQuery):
     await callback.answer()
 
 
+
+
+@router.callback_query(F.data.startswith("warehouse_svod_product:"))
+@access_required
+async def warehouse_svod_product_handler(callback: CallbackQuery):
+    _, warehouse_id, product_id = callback.data.split(":", maxsplit=2)
+    warehouse_id = int(warehouse_id)
+    product_id = int(product_id)
+
+    movements = await get_warehouse_movements(
+        movement="out",
+        warehouse_id=warehouse_id,
+        product_id=product_id,
+    )
+
+    grouped = {}
+    for item in movements:
+        district_name = str(item.get("district_name") or "-")
+        quantity = float(item.get("quantity") or 0)
+        grouped[district_name] = grouped.get(district_name, 0) + quantity
+
+    products = await get_warehouse_products(warehouse_id=warehouse_id, movement="out")
+    product_name = next(
+        (item.get("product_name") for item in products if int(item.get("product_id", 0)) == product_id),
+        "Маҳсулот",
+    )
+
+    warehouse_map = await _warehouse_map()
+    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+
+    lines = [
+        f"🏬 {warehouse_name}",
+        f"📊 Свод: {product_name}",
+        "",
+        f"{'№':<3} {'Туман':<18} {'Ҳозирги кун':>11} {'Бир кунлик':>10} {'Мавсум':>10}",
+        "-" * 58,
+    ]
+
+    if grouped:
+        season_total = sum(grouped.values())
+        for index, (district, value) in enumerate(sorted(grouped.items()), start=1):
+            lines.append(f"{index:<3} {district[:18]:<18} {value:>11.0f} {value:>10.0f} {season_total:>10.0f}")
+    else:
+        lines.append("Маълумот топилмади.")
+
+    keyboard = warehouse_svod_products_inline_keyboard(
+        warehouse_id=warehouse_id,
+        products=products,
+        back_callback=f"warehouse_back_sections:{warehouse_id}",
+    )
+
+    content = "\n".join(lines)
+    await callback.message.edit_text(f"<pre>{content}</pre>", parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("warehouse_product:"))
 @access_required
 async def warehouse_product_handler(callback: CallbackQuery):
@@ -312,13 +396,14 @@ async def _send_warehouse_movements_page(
             lines.append(f"{date_text:<14} {invoice_number:<7} {quantity:>5}")
     else:
         lines.append("📤 Чиқим деталлари:")
-        lines.append(f"{'№':<3} {'Фермер номи':<16} {'Миқдори':>8} {'Га/кг':>6}")
-        lines.append("-" * 37)
-        for index, item in enumerate(page_items, start=start + 1):
-            farmer_name = (item.get("farmer_name") or "-")[:16]
+        lines.append(f"{'Сана':<12} {'Ҳужжат №':<10} {'Маҳсулот':<16} {'Миқдори':>8}")
+        lines.append("-" * 52)
+        for item in page_items:
+            date_text = _format_date_ddmmyyyy(item.get("date"))
+            document_number = str(item.get("number") or item.get("invoice_number") or "-")[:10]
+            product = (item.get("product_name") or "-")[:16]
             quantity = f"{float(item.get('quantity') or 0):.0f}"
-            per_area = f"{float(item.get('quantity_per_area') or 0):.0f}"
-            lines.append(f"{index:<3} {farmer_name:<16} {quantity:>8} {per_area:>6}")
+            lines.append(f"{date_text:<12} {document_number:<10} {product:<16} {quantity:>8}")
 
     content = "\n".join(lines)
 
