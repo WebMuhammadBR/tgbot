@@ -438,15 +438,15 @@ async def _send_warehouse_movements_page(
         today_title = date.today().strftime("%d.%m.%Y")
         lines.append(f"{'№':<3} {'Туман':<10} {'Бир кунда':>8} {'Мавсумда':>10}")
         lines.append(f"{'':<14} { today_title  :>10}")
-        lines.append("-" * 40)
+        lines.append("-" * 38)
         for index, item in enumerate(page_items, start=start + 1):
             district_name = (item.get("district_name") or "-")[:16]
             today_quantity = f"{float(item.get('today_quantity') or 0):.0f}"
             district_total_quantity = f"{float(item.get('total_quantity') or 0):.0f}"
             lines.append(f"{index:<3} {district_name:<10} {today_quantity:>8} {district_total_quantity:>12}")
 
-        lines.append("-" * 40)
-        lines.append(f"{'':<3} {'Жами':<10} {total_today_quantity:>8.0f} {total_quantity:>10.0f}")
+        lines.append("-" * 38)
+        lines.append(f"{'':<3} {'Жами':<10} {total_today_quantity:>8.0f} {total_quantity:>12.0f}")
 
     content = "\n".join(lines)
 
