@@ -410,14 +410,14 @@ async def _send_warehouse_movements_page(
 
     if movement == "in":
         lines.append("📥 Кирим деталлари:")
-        lines.append(f"{'Сана':<12} {'Нак-№':<8} {'Қоп сони':>9} {'Миқдори':>10}")
-        lines.append("-" * 44)
+        lines.append(f"{'Сана':<12} {'Юк-№':<4} {'Қоп':>4} {'Миқдори':>8}")
+        lines.append("-" * 38)
         for item in page_items:
             date_text = _format_date_ddmmyyyy(item.get("date"))
             invoice_number = str(item.get("invoice_number") or "-")
             bag_count = f"{int(item.get('bag_count') or 0)}"
             quantity = f"{float(item.get('quantity') or 0):.0f}"
-            lines.append(f"{date_text:<14} {invoice_number:<8} {bag_count:>9} {quantity:>10}")
+            lines.append(f"{date_text:<12} {invoice_number:<4} {bag_count:>4} {quantity:>8}")
     elif movement == "out":
         expense_rows = _expense_rows_by_farmer(movements)
         page_items = expense_rows[start:end]
@@ -436,17 +436,17 @@ async def _send_warehouse_movements_page(
         total_quantity = sum(float(item.get("total_quantity") or 0) for item in report_rows)
         lines.append("📊 Свод деталлари:")
         today_title = date.today().strftime("%d.%m.%Y")
-        lines.append(f"{'№':<3} {'Туман':<16} {'Бир кунда':>10} {'Миқдори':>10}")
-        lines.append(f"{'':<20} {'(' + today_title + ')':>10}")
-        lines.append("-" * 46)
+        lines.append(f"{'№':<3} {'Туман':<10} {'Бир кунда':>8} {'Мавсумда':>10}")
+        lines.append(f"{'':<14} { today_title  :>10}")
+        lines.append("-" * 40)
         for index, item in enumerate(page_items, start=start + 1):
             district_name = (item.get("district_name") or "-")[:16]
             today_quantity = f"{float(item.get('today_quantity') or 0):.0f}"
             district_total_quantity = f"{float(item.get('total_quantity') or 0):.0f}"
-            lines.append(f"{index:<3} {district_name:<16} {today_quantity:>10} {district_total_quantity:>10}")
+            lines.append(f"{index:<3} {district_name:<10} {today_quantity:>8} {district_total_quantity:>12}")
 
-        lines.append("-" * 46)
-        lines.append(f"{'':<3} {'Жами':<16} {total_today_quantity:>10.0f} {total_quantity:>10.0f}")
+        lines.append("-" * 40)
+        lines.append(f"{'':<3} {'Жами':<10} {total_today_quantity:>8.0f} {total_quantity:>10.0f}")
 
     content = "\n".join(lines)
 
