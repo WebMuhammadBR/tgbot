@@ -89,6 +89,35 @@ def _report_rows_by_district(items: list[dict]) -> list[dict]:
     return sorted(district_totals.values(), key=lambda row: row["district_name"])
 
 
+def _expense_rows_by_farmer(items: list[dict]) -> list[dict]:
+    farmer_totals: dict[str, dict] = {}
+
+    for item in items:
+        farmer_name = (item.get("farmer_name") or "-").strip() or "-"
+        quantity = float(item.get("quantity") or 0)
+        maydon = float(item.get("maydon") or 0)
+
+        record = farmer_totals.setdefault(
+            farmer_name,
+            {
+                "farmer_name": farmer_name,
+                "quantity": 0.0,
+                "maydon": maydon,
+            },
+        )
+        record["quantity"] += quantity
+
+        if record.get("maydon", 0) <= 0 and maydon > 0:
+            record["maydon"] = maydon
+
+    rows = sorted(farmer_totals.values(), key=lambda row: row["farmer_name"])
+    for row in rows:
+        maydon = row.get("maydon") or 0
+        row["quantity_per_area"] = (row["quantity"] / maydon) if maydon > 0 else 0.0
+
+    return rows
+
+
 async def _warehouse_map():
     warehouses = await get_warehouses()
     return {
@@ -390,6 +419,8 @@ async def _send_warehouse_movements_page(
             quantity = f"{float(item.get('quantity') or 0):.0f}"
             lines.append(f"{date_text:<14} {invoice_number:<8} {bag_count:>9} {quantity:>10}")
     elif movement == "out":
+        expense_rows = _expense_rows_by_farmer(movements)
+        page_items = expense_rows[start:end]
         lines.append("📤 Чиқим деталлари:")
         lines.append(f"{'№':<3} {'Фермер номи':<16} {'Миқдори':>8} {'Га/кг':>6}")
         lines.append("-" * 37)
@@ -428,7 +459,11 @@ async def _send_warehouse_movements_page(
         product_id=product_id,
         district_id=district_id,
         page=page,
-        has_next=end < (len(report_rows) if movement == "report" else len(movements)),
+        has_next=end < (
+            len(report_rows)
+            if movement == "report"
+            else (len(expense_rows) if movement == "out" else len(movements))
+        ),
         back_callback=back_callback,
     )
     await message.edit_text(f"<pre>{content}</pre>", parse_mode="HTML", reply_markup=keyboard)
