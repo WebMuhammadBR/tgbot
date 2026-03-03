@@ -56,6 +56,22 @@ def warehouse_movement_menu():
 
 
 
+contracts_type_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(text="📊 Ҳаммаси"),
+            KeyboardButton(text="📑 Фючерс"),
+        ],
+        [
+            KeyboardButton(text="📑 Форвард"),
+            KeyboardButton(text="📑 Сақлаш"),
+        ],
+        [KeyboardButton(text="⬅️ Фермерлар бўлими")],
+        [KeyboardButton(text="🏠 Асосий меню")],
+    ],
+    resize_keyboard=True,
+)
+
 def farmers_filter_keyboard(districts: list[str]):
     buttons = [[InlineKeyboardButton(text="📊 Умумий", callback_data="farmers_filter:0:1")]]
 
@@ -104,18 +120,18 @@ def farmers_pagination_keyboard(page: int, has_next: bool, district_index: int):
 
 
 
-def contracts_filter_keyboard(districts: list[str]):
-    buttons = [[InlineKeyboardButton(text="📊 Умумий", callback_data="contracts_filter:0:1")]]
+def contracts_filter_keyboard(districts: list[str], contract_type: str = "all"):
+    buttons = [[InlineKeyboardButton(text="📊 Ҳаммаси", callback_data=f"contracts_filter:{contract_type}:0:1")]]
 
     for index, district in enumerate(districts, start=1):
         buttons.append(
-            [InlineKeyboardButton(text=district, callback_data=f"contracts_filter:{index}:1")]
+            [InlineKeyboardButton(text=district, callback_data=f"contracts_filter:{contract_type}:{index}:1")]
         )
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def contracts_pagination_keyboard(page: int, has_next: bool, district_index: int):
+def contracts_pagination_keyboard(page: int, has_next: bool, district_index: int = 0, contract_type: str = "all"):
 
     buttons = []
     row = []
@@ -124,14 +140,14 @@ def contracts_pagination_keyboard(page: int, has_next: bool, district_index: int
         row.append(
             InlineKeyboardButton(
                 text="⬅️",
-                callback_data=f"contracts_filter:{district_index}:{page-1}"
+                callback_data=f"contracts_filter:{contract_type}:{district_index}:{page-1}"
             )
         )
 
     row.append(
         InlineKeyboardButton(
             text="📥 Excel",
-            callback_data=f"contracts_export_excel:{district_index}"
+            callback_data=f"contracts_export_excel:{contract_type}:{district_index}"
         )
     )
 
@@ -139,13 +155,13 @@ def contracts_pagination_keyboard(page: int, has_next: bool, district_index: int
         row.append(
             InlineKeyboardButton(
                 text="➡️",
-                callback_data=f"contracts_filter:{district_index}:{page+1}"
+                callback_data=f"contracts_filter:{contract_type}:{district_index}:{page+1}"
             )
         )
 
     buttons.append(row)
     buttons.append(
-        [InlineKeyboardButton(text="⬅️ Туманлар рўйхати", callback_data="contracts_back_to_filters")]
+        [InlineKeyboardButton(text="⬅️ Туманлар рўйхати", callback_data=f"contracts_back_to_districts:{contract_type}")]
     )
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)

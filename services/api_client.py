@@ -33,9 +33,15 @@ async def get_farmers():
             return await resp.json()
 
 
-async def get_contracts_summary():
+async def get_contracts_summary(contract_type: str | None = None):
+    params = {}
+    if contract_type:
+        params["contract_type"] = contract_type
+
+    query = f"?{urlencode(params)}" if params else ""
+
     async with aiohttp.ClientSession() as session:
-        async with session.get(f"{API_BASE_URL}/farmers/summary/") as resp:
+        async with session.get(f"{API_BASE_URL}/farmers/summary/{query}") as resp:
             return await resp.json()
 
 
@@ -134,3 +140,30 @@ async def get_warehouse_expense_districts(warehouse_id: int | None = None):
     async with aiohttp.ClientSession() as session:
         async with session.get(f"{API_BASE_URL}/warehouse/expense-districts/{query}") as resp:
             return await resp.json()
+
+
+async def log_activity(
+    telegram_id: int,
+    action_name: str,
+    action_payload: str = "",
+    action_type: str = "message",
+    is_allowed: bool = True,
+):
+    timeout = aiohttp.ClientTimeout(total=10)
+    payload = {
+        "telegram_id": telegram_id,
+        "action_type": action_type,
+        "action_name": (action_name or "unknown")[:100],
+        "action_payload": (action_payload or "")[:1000],
+        "is_allowed": is_allowed,
+    }
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                f"{API_BASE_URL}/bot-user/activity/",
+                json=payload,
+            ):
+                return True
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return False

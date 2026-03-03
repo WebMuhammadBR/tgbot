@@ -1,6 +1,6 @@
 from functools import wraps
 from aiogram.types import Message, CallbackQuery
-from services.api_client import check_access
+from services.api_client import check_access, log_activity
 
 
 def access_required(handler):
@@ -21,11 +21,26 @@ def access_required(handler):
         is_allowed = isinstance(result, dict) and bool(result.get("allowed"))
 
         if not is_allowed:
+            await log_activity(
+                telegram_id=telegram_id,
+                action_name="access_denied",
+                action_payload=getattr(event, "text", "") or getattr(event, "data", ""),
+                action_type="message" if isinstance(event, Message) else "callback",
+                is_allowed=False,
+            )
             if isinstance(event, Message):
                 await event.answer("⛔️ Сизга рухсат берилмаган.")
             else:
                 await event.answer("⛔️ Рухсат йўқ", show_alert=True)
             return
+
+        await log_activity(
+            telegram_id=telegram_id,
+            action_name=getattr(handler, "__name__", "handler"),
+            action_payload=getattr(event, "text", "") or getattr(event, "data", ""),
+            action_type="message" if isinstance(event, Message) else "callback",
+            is_allowed=True,
+        )
 
         return await handler(event, *args, **kwargs)
 
