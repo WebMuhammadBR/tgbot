@@ -1,3 +1,3 @@
-TOKEN = "7700091895:AAGoi7KA-t-aOfwuk7fTxmQclGexYNavgQE"
+TOKEN = "5877296379:AAF9YiyPE9159FXVJLIL-IWB30ieXmHtDlM"
 
-API_BASE_URL = "http://tetratexmchj.uz/api"
+API_BASE_URL = "http://127.0.0.1:8000/api"

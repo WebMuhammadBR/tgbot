@@ -17,10 +17,19 @@ _MUTED_TEXT = "#486581"
 _BORDER = "#d9e2ec"
 _ROW_ALT = "#f8fbff"
 
+_LOCAL_FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
 
 _FONT_PATHS = [
+    _LOCAL_FONTS_DIR / "NotoSans-Regular.ttf",
+    _LOCAL_FONTS_DIR / "DejaVuSans.ttf",
     "DejaVuSans.ttf",
+    "NotoSans-Regular.ttf",
     "Arial.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
     "C:/Windows/Fonts/arial.ttf",
     "C:/Windows/Fonts/segoeui.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -31,13 +40,23 @@ _FONT_PATHS = [
 def _load_font(size: int, bold: bool = False):
     from PIL import ImageFont
 
+    pil_fonts_dir = Path(ImageFont.__file__).resolve().parent / "fonts"
+
     candidates = []
     if bold:
         candidates.extend(
             [
+                _LOCAL_FONTS_DIR / "NotoSans-Bold.ttf",
+                _LOCAL_FONTS_DIR / "DejaVuSans-Bold.ttf",
+                pil_fonts_dir / "NotoSans-Bold.ttf",
+                pil_fonts_dir / "DejaVuSans-Bold.ttf",
                 "DejaVuSans-Bold.ttf",
+                "NotoSans-Bold.ttf",
                 "Arial Bold.ttf",
                 "arialbd.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+                "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+                "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
                 "C:/Windows/Fonts/arialbd.ttf",
                 "C:/Windows/Fonts/seguisb.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -45,13 +64,20 @@ def _load_font(size: int, bold: bool = False):
             ]
         )
 
+    candidates.extend(
+        [
+            pil_fonts_dir / "NotoSans-Regular.ttf",
+            pil_fonts_dir / "DejaVuSans.ttf",
+        ]
+    )
     candidates.extend(_FONT_PATHS)
 
     for path in candidates:
-        if Path(path).is_absolute() and not Path(path).exists():
+        normalized_path = Path(path)
+        if normalized_path.is_absolute() and not normalized_path.exists():
             continue
         try:
-            return ImageFont.truetype(path, size)
+            return ImageFont.truetype(str(normalized_path), size)
         except OSError:
             continue
 
