@@ -5,7 +5,8 @@ import pandas as pd
 from openpyxl.styles import Font
 
 
-
+def _as_int_amount(value):
+    return int(float(value or 0))
 
 def _excel_date(value):
     if not value:
@@ -48,16 +49,36 @@ async def farmers_to_excel(data: list):
     if not data:
         return None
 
+    all_products = sorted(
+        {
+            (name or "-").strip() or "-"
+            for farmer in data
+            for name in (farmer.get("product_totals") or {}).keys()
+        },
+        key=lambda value: value.lower(),
+    )
+
     formatted = []
     for index, farmer in enumerate(data, start=1):
-        formatted.append(
-            {
-                "№": index,
-                "ИНН": farmer["inn"],
-                "Фермер номи": farmer["name"],
-                "Баланс": float(farmer["balance"]),
-            }
-        )
+        row = {
+            "№": index,
+            "Туман": farmer.get("district") or "-",
+            "Массив": farmer.get("massive") or "-",
+            "Фермер номи": farmer.get("name") or "-",
+        }
+
+        product_totals = farmer.get("product_totals") or {}
+        for product_name in all_products:
+            row[product_name] = _as_int_amount(product_totals.get(product_name))
+
+        row["Жами"] = _as_int_amount(farmer.get("farmer_total_amount"))
+        formatted.append(row)
+
+    totals_row = {"№": "", "Туман": "", "Массив": "", "Фермер номи": "Жами"}
+    for product_name in all_products:
+        totals_row[product_name] = _as_int_amount(sum(float((farmer.get("product_totals") or {}).get(product_name) or 0) for farmer in data))
+    totals_row["Жами"] = _as_int_amount(sum(float(farmer.get("farmer_total_amount") or 0) for farmer in data))
+    formatted.append(totals_row)
 
     df = pd.DataFrame(formatted)
     buffer = BytesIO()
@@ -118,11 +139,13 @@ async def warehouse_receipts_to_excel(data: list[dict]):
         formatted.append(
             {
                 "№": index,
-                "Сана": item.get("date"),
-                "Накладной": item.get("invoice_number") or "-",
+                "Сана": _excel_date(item.get("date")),
+                "Юк-хати №": item.get("invoice_number") or "-",
                 "Маҳсулот": item.get("product_name") or "-",
+                "Транспорт №": item.get("transport_number") or "-",
                 "Қоп сони": item.get("bag_count") or 0,
-                "Миқдор": float(item.get("quantity") or 0),
+                "Миқдори": float(item.get("quantity") or 0),
+                "Омбор": item.get("warehouse_name") or "-",
             }
         )
 
@@ -141,6 +164,33 @@ async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
     if not data:
         return None
 
+    if mode == "out":
+        grouped: dict[tuple[str, str, str, str], dict] = {}
+        for item in data:
+            district = (item.get("district_name") or "-").strip() or "-"
+            massive = (item.get("massive_name") or "-").strip() or "-"
+            farmer = (item.get("farmer_name") or "-").strip() or "-"
+            product = (item.get("product_name") or "-").strip() or "-"
+            key = (district, massive, farmer, product)
+
+            row = grouped.setdefault(
+                key,
+                {
+                    "district_name": district,
+                    "massive_name": massive,
+                    "farmer_name": farmer,
+                    "product_name": product,
+                    "quantity": 0.0,
+                    "quantity_per_area": float(item.get("quantity_per_area") or 0),
+                },
+            )
+            row["quantity"] += float(item.get("quantity") or 0)
+
+        data = sorted(
+            grouped.values(),
+            key=lambda row: (row["district_name"], row["massive_name"], row["farmer_name"], row["product_name"]),
+        )
+
     formatted = []
     for index, item in enumerate(data, start=1):
         if mode == "report":
@@ -157,11 +207,11 @@ async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
         formatted.append(
             {
                 "№": index,
-                "Сана": _excel_date(item.get("date")),
-                "Ҳужжат №": item.get("number") or "-",
-                "Фермер": item.get("farmer_name") or "-",
+                "Туман": item.get("district_name") or "-",
+                "Массив": item.get("massive_name") or "-",
+                "Фермер номи": item.get("farmer_name") or "-",
                 "Маҳсулот": item.get("product_name") or "-",
-                "Миқдор": float(item.get("quantity") or 0),
+                "Миқдори": float(item.get("quantity") or 0),
                 "Га/кг": round(float(item.get("quantity_per_area") or 0)),
             }
         )

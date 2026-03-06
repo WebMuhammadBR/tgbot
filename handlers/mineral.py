@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from datetime import date, datetime
 
@@ -12,6 +13,7 @@ from keyboards import (
     warehouse_products_inline_keyboard,
 )
 from middlewares.access import access_required
+from services.table_image import build_table_image, send_or_edit_table_image
 from services.api_client import (
     get_warehouse_expense_districts,
     get_warehouse_movements,
@@ -21,12 +23,25 @@ from services.api_client import (
 )
 
 router = Router()
-PER_PAGE = 25
+PER_PAGE = 10
+REPORT_PER_PAGE = 6
 USER_SELECTED_WAREHOUSE: dict[int, int] = {}
 
 WAREHOUSE_RECEIPT_NAMES = {"📥 Кирим", "kirim", "krim", "кирим"}
 WAREHOUSE_EXPENSE_NAMES = {"📤 Чиқим", "chiqim", "чиқим"}
 WAREHOUSE_REPORT_NAMES = {"📊 Свод", "svod", "свод"}
+
+
+async def _edit_message_content(message: Message, text: str, reply_markup=None):
+    if message.content_type == "photo":
+        try:
+            await message.delete()
+            await message.answer(text, reply_markup=reply_markup)
+            return
+        except TelegramBadRequest:
+            pass
+
+    await message.edit_text(text, reply_markup=reply_markup)
 
 
 def _format_date_ddmmyyyy(value) -> str:
@@ -70,6 +85,11 @@ def _date_key(value) -> str:
     return date_text[:10]
 
 
+def _format_number_with_spaces(value, digits: int = 0) -> str:
+    formatted = f"{float(value or 0):,.{digits}f}"
+    return formatted.replace(",", " ")
+
+
 def _report_rows_by_district(items: list[dict]) -> list[dict]:
     today_key = date.today().strftime("%Y-%m-%d")
     district_totals: dict[str, dict] = {}
@@ -89,33 +109,35 @@ def _report_rows_by_district(items: list[dict]) -> list[dict]:
     return sorted(district_totals.values(), key=lambda row: row["district_name"])
 
 
-def _expense_rows_by_farmer(items: list[dict]) -> list[dict]:
-    farmer_totals: dict[str, dict] = {}
+def _aggregate_expense_rows_by_farmer(items: list[dict]) -> list[dict]:
+    grouped: dict[tuple[str, str, str, str], dict] = {}
 
     for item in items:
+        district_name = (item.get("district_name") or "-").strip() or "-"
+        massive_name = (item.get("massive_name") or "-").strip() or "-"
         farmer_name = (item.get("farmer_name") or "-").strip() or "-"
-        quantity = float(item.get("quantity") or 0)
-        maydon = float(item.get("maydon") or 0)
+        product_name = (item.get("product_name") or "-").strip() or "-"
 
-        record = farmer_totals.setdefault(
-            farmer_name,
+        key = (district_name, massive_name, farmer_name, product_name)
+        quantity = float(item.get("quantity") or 0)
+
+        row = grouped.setdefault(
+            key,
             {
+                "district_name": district_name,
+                "massive_name": massive_name,
                 "farmer_name": farmer_name,
+                "product_name": product_name,
                 "quantity": 0.0,
-                "maydon": maydon,
+                "quantity_per_area": float(item.get("quantity_per_area") or 0),
             },
         )
-        record["quantity"] += quantity
+        row["quantity"] += quantity
 
-        if record.get("maydon", 0) <= 0 and maydon > 0:
-            record["maydon"] = maydon
-
-    rows = sorted(farmer_totals.values(), key=lambda row: row["farmer_name"])
-    for row in rows:
-        maydon = row.get("maydon") or 0
-        row["quantity_per_area"] = (row["quantity"] / maydon) if maydon > 0 else 0.0
-
-    return rows
+    return sorted(
+        grouped.values(),
+        key=lambda row: (row["district_name"], row["massive_name"], row["farmer_name"], row["product_name"]),
+    )
 
 
 async def _warehouse_map():
@@ -247,21 +269,23 @@ async def warehouse_item_handler(message: Message):
 @router.callback_query(F.data.startswith("warehouse_back_sections:"))
 @access_required
 async def warehouse_back_sections_handler(callback: CallbackQuery):
+    await callback.answer()
     _, warehouse_id = callback.data.split(":", maxsplit=1)
     warehouse_id = int(warehouse_id)
     warehouse_map = await _warehouse_map()
     warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
 
-    await callback.message.edit_text(
+    await _edit_message_content(
+        callback.message,
         f"🏬 {warehouse_name}\nКеракли бўлимни танланг:\n\n📌 Кирим/Чиқимни пастдаги клавиатурадан танланг."
     )
     await callback.message.answer("Танланг 👇", reply_markup=warehouse_movement_menu())
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("warehouse_expense_district:"))
 @access_required
 async def warehouse_expense_district_handler(callback: CallbackQuery):
+    await callback.answer()
     _, warehouse_id, district_id, section = callback.data.split(":", maxsplit=3)
     warehouse_id = int(warehouse_id)
     district_id = int(district_id)
@@ -276,12 +300,12 @@ async def warehouse_expense_district_handler(callback: CallbackQuery):
         district_id=district_id,
         warehouse_name=warehouse_name,
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("warehouse_back_to_districts:"))
 @access_required
 async def warehouse_back_to_districts_handler(callback: CallbackQuery):
+    await callback.answer()
     parts = callback.data.split(":", maxsplit=2)
     warehouse_id = int(parts[1])
     section = parts[2] if len(parts) > 2 else "out"
@@ -294,16 +318,17 @@ async def warehouse_back_to_districts_handler(callback: CallbackQuery):
     else:
         title = "📤 Чиқим учун туманни танланг:"
 
-    await callback.message.edit_text(
+    await _edit_message_content(
+        callback.message,
         f"🏬 {warehouse_name}\n{title}",
         reply_markup=warehouse_expense_districts_inline_keyboard(warehouse_id, districts, section=section),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("warehouse_back_to_products:"))
 @access_required
 async def warehouse_back_to_products_handler(callback: CallbackQuery):
+    await callback.answer()
     _, warehouse_id, movement, district_id, section = callback.data.split(":", maxsplit=4)
     warehouse_id = int(warehouse_id)
     district_id = int(district_id)
@@ -317,12 +342,12 @@ async def warehouse_back_to_products_handler(callback: CallbackQuery):
         district_id=district_id,
         warehouse_name=warehouse_name,
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("warehouse_product:"))
 @access_required
 async def warehouse_product_handler(callback: CallbackQuery):
+    await callback.answer()
     _, warehouse_id, movement, product_id = callback.data.split(":", maxsplit=3)
     warehouse_id = int(warehouse_id)
     product_id = int(product_id)
@@ -344,12 +369,12 @@ async def warehouse_product_handler(callback: CallbackQuery):
         district_id=district_id or 0,
         page=1,
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("warehouse_movements_page:"))
 @access_required
 async def warehouse_movements_page_handler(callback: CallbackQuery):
+    await callback.answer()
     _, warehouse_id, movement, product_id, district_id, page = callback.data.split(":", maxsplit=5)
     await _send_warehouse_movements_page(
         message=callback.message,
@@ -359,7 +384,6 @@ async def warehouse_movements_page_handler(callback: CallbackQuery):
         district_id=int(district_id),
         page=int(page),
     )
-    await callback.answer()
 
 
 async def _send_warehouse_movements_page(
@@ -394,61 +418,118 @@ async def _send_warehouse_movements_page(
         "Маҳсулот",
     )
 
-    start = (page - 1) * PER_PAGE
-    end = start + PER_PAGE
+    page_size = REPORT_PER_PAGE if movement == "report" else PER_PAGE
+    start = (page - 1) * page_size
+    end = start + page_size
     page_items = movements[start:end]
 
-    lines = [
-        f"🏬 {warehouse_name}",
-        f"📦 {product_name}",
-        "",
-        f"📥 Кирим: {float(totals.get('total_in', 0)):.2f}",
-        f"📤 Чиқим: {float(totals.get('total_out', 0)):.2f}",
-        f"🧮 Қолдиқ: {float(totals.get('balance', 0)):.2f}",
-        "",
-    ]
+    subtitle = (
+        f"Омбор: {warehouse_name}  |  Маҳсулот: {product_name}"[:140]
+        + "\n\n"
+        + (
+            f"Кирим: {_format_number_with_spaces(totals.get('total_in', 0), digits=2)}  |  "
+            f"Чиқим: {_format_number_with_spaces(totals.get('total_out', 0), digits=2)}  |  "
+            f"Қолдиқ: {_format_number_with_spaces(totals.get('balance', 0), digits=2)}"
+        )
+    )
+
+    footer_lines = None
+    report_rows: list[dict] = []
+    expense_rows: list[dict] = []
 
     if movement == "in":
-        lines.append("📥 Кирим деталлари:")
-        lines.append(f"{'Сана':<12} {'Юк-№':<4} {'Қоп':>4} {'Миқдори':>8}")
-        lines.append("-" * 38)
-        for item in page_items:
-            date_text = _format_date_ddmmyyyy(item.get("date"))
-            invoice_number = str(item.get("invoice_number") or "-")
-            bag_count = f"{int(item.get('bag_count') or 0)}"
-            quantity = f"{float(item.get('quantity') or 0):.0f}"
-            lines.append(f"{date_text:<12} {invoice_number:<4} {bag_count:>4} {quantity:>8}")
+        table_title = "📥 Кирим деталлари"
+        columns = ["№", "Юк-хати №", "Маҳсулот", "Транспорт №", "Қоп сони", "Миқдори", "Омбор"]
+        column_widths = [80, 170, 220, 180, 150, 150, 210]
+        rows = [
+            [
+                str(index),
+                str(item.get("invoice_number") or "-"),
+                str(item.get("product_name") or "-"),
+                str(item.get("transport_number") or "-"),
+                _format_number_with_spaces(item.get("bag_count") or 0),
+                _format_number_with_spaces(item.get("quantity") or 0),
+                str(item.get("warehouse_name") or "-"),
+            ]
+            for index, item in enumerate(page_items, start=start + 1)
+        ]
+        column_alignments = ["center", "center", "left", "center", "center", "center", "left"]
     elif movement == "out":
-        expense_rows = _expense_rows_by_farmer(movements)
+        expense_rows = _aggregate_expense_rows_by_farmer(movements)
         page_items = expense_rows[start:end]
-        lines.append("📤 Чиқим деталлари:")
-        lines.append(f"{'№':<3} {'Фермер номи':<16} {'Миқдори':>8} {'Га/кг':>6}")
-        lines.append("-" * 37)
-        for index, item in enumerate(page_items, start=start + 1):
-            farmer_name = (item.get("farmer_name") or "-")[:16]
-            quantity = f"{float(item.get('quantity') or 0):.0f}"
-            per_area = f"{float(item.get('quantity_per_area') or 0):.0f}"
-            lines.append(f"{index:<3} {farmer_name:<16} {quantity:>8} {per_area:>6}")
+        table_title = "📤 Чиқим деталлари"
+        columns = ["№", "Туман", "Массив", "Фермер номи", "Маҳсулот", "Миқдори", "Га/кг"]
+        column_widths = [70, 150, 160, 320, 180, 150, 150]
+        column_alignments = ["center", "left", "left", "left", "left", "center", "center"]
+        rows = [
+            [
+                str(index),
+                (item.get("district_name") or "-")[:16],
+                (item.get("massive_name") or "-")[:16],
+                (item.get("farmer_name") or "-")[:20],
+                (item.get("product_name") or "-")[:16],
+                _format_number_with_spaces(item.get("quantity") or 0),
+                (
+                    _format_number_with_spaces(item.get("quantity_per_area") or 0),
+                    "#d62828",
+                )
+                if float(item.get("quantity_per_area") or 0) > 302
+                else _format_number_with_spaces(item.get("quantity_per_area") or 0),
+            ]
+            for index, item in enumerate(page_items, start=start + 1)
+        ]
     else:
         report_rows = _report_rows_by_district(movements)
         page_items = report_rows[start:end]
         total_today_quantity = sum(float(item.get("today_quantity") or 0) for item in report_rows)
         total_quantity = sum(float(item.get("total_quantity") or 0) for item in report_rows)
-        lines.append("📊 Свод деталлари:")
-        today_title = date.today().strftime("%d.%m.%Y")
-        lines.append(f"{'№':<3} {'Туман':<10} {'Бир кунда':>8} {'Мавсумда':>10}")
-        lines.append(f"{'':<14} { today_title  :>10}")
-        lines.append("-" * 38)
-        for index, item in enumerate(page_items, start=start + 1):
-            district_name = (item.get("district_name") or "-")[:16]
-            today_quantity = f"{float(item.get('today_quantity') or 0):.0f}"
-            district_total_quantity = f"{float(item.get('total_quantity') or 0):.0f}"
-            lines.append(f"{index:<3} {district_name:<10} {today_quantity:>8} {district_total_quantity:>12}")
 
-        lines.append("-" * 38)
-        lines.append(f"{'':<3} {'Жами':<10} {total_today_quantity:>8.0f} {total_quantity:>12.0f}")
+        table_title = "Свод деталлари"
+        columns = ["№", "Туман", "Бир кунда ", "Мавсумда"]
+        column_widths = [100, 300, 290, 250]
+        column_alignments = ["center", "left", "center", "center"]
+        rows = [
+            [
+                str(index),
+                (item.get("district_name") or "-")[:24],
+                _format_number_with_spaces(item.get("today_quantity") or 0),
+                _format_number_with_spaces(item.get("total_quantity") or 0),
+            ]
+            for index, item in enumerate(page_items, start=start + 1)
+        ]
+        rows.append(
+            [
+                "",
+                "ЖАМИ",
+                _format_number_with_spaces(total_today_quantity),
+                _format_number_with_spaces(total_quantity),
+            ]
+        )
+        footer_lines = [
+            f"Жами бир кунда: {_format_number_with_spaces(total_today_quantity)}",
+            f"Жами мавсумда: {_format_number_with_spaces(total_quantity)}",
+        ]
 
-    content = "\n".join(lines)
+    top_note = f"Сана: {date.today().strftime('%d.%m.%Y')}" if movement == "report" else None
+
+    image_bytes = build_table_image(
+        title=table_title,
+        subtitle=subtitle,
+        subtitle_bold=True,
+        subtitle_color="#0b1f44",
+        subtitle_alignment="left",
+        top_note=top_note,
+        top_note_alignment="left",
+        top_note_right_padding=70,
+        top_note_bold=True,
+        top_note_color="#d62828",
+        columns=columns,
+        column_widths=column_widths,
+        column_alignments=column_alignments,
+        rows=rows,
+        min_rows=page_size,
+        footer_lines=footer_lines,
+    )
 
     section = "report" if movement == "report" else movement
     back_callback = f"warehouse_back_to_products:{warehouse_id}:{movement}:{district_id}:{section}"
@@ -466,7 +547,7 @@ async def _send_warehouse_movements_page(
         ),
         back_callback=back_callback,
     )
-    await message.edit_text(f"<pre>{content}</pre>", parse_mode="HTML", reply_markup=keyboard)
+    await send_or_edit_table_image(message, image_bytes, keyboard, edit=True)
 
 
 async def _send_warehouse_products_page(message, warehouse_id: int, movement: str, district_id: int, warehouse_name: str):
@@ -479,11 +560,11 @@ async def _send_warehouse_products_page(message, warehouse_id: int, movement: st
 
     if not products:
         if movement == "in":
-            await message.edit_text(f"🏬 {warehouse_name}\n\n📥 Кирим бўйича маълумот топилмади.")
+            await _edit_message_content(message, f"🏬 {warehouse_name}\n\n📥 Кирим бўйича маълумот топилмади.")
         elif movement == "out":
-            await message.edit_text(f"🏬 {warehouse_name}\n\n📤 Чиқим бўйича маълумот топилмади.")
+            await _edit_message_content(message, f"🏬 {warehouse_name}\n\n📤 Чиқим бўйича маълумот топилмади.")
         else:
-            await message.edit_text(f"🏬 {warehouse_name}\n\n📊 Свод бўйича маълумот топилмади.")
+            await _edit_message_content(message, f"🏬 {warehouse_name}\n\n📊 Свод бўйича маълумот топилмади.")
         return
 
     movement_token = "in"
@@ -503,7 +584,8 @@ async def _send_warehouse_products_page(message, warehouse_id: int, movement: st
 
     section_title = "📥 Кирим" if movement == "in" else ("📤 Чиқим" if movement == "out" else "📊 Свод")
 
-    await message.edit_text(
+    await _edit_message_content(
+        message,
         f"🏬 {warehouse_name}\n{section_title} учун маҳсулотни танланг:",
         reply_markup=warehouse_products_inline_keyboard(
             warehouse_id,
