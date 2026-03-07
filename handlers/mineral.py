@@ -129,10 +129,13 @@ def _aggregate_expense_rows_by_farmer(items: list[dict]) -> list[dict]:
                 "farmer_name": farmer_name,
                 "product_name": product_name,
                 "quantity": 0.0,
-                "quantity_per_area": float(item.get("quantity_per_area") or 0),
+                "maydon": float(item.get("maydon") or 0),
+                "quantity_per_area": 0.0,
             },
         )
         row["quantity"] += quantity
+        row["maydon"] = max(row["maydon"], float(item.get("maydon") or 0))
+        row["quantity_per_area"] = row["quantity"] / row["maydon"] if row["maydon"] > 0 else 0.0
 
     return sorted(
         grouped.values(),

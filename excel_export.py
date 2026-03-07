@@ -181,10 +181,13 @@ async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
                     "farmer_name": farmer,
                     "product_name": product,
                     "quantity": 0.0,
-                    "quantity_per_area": float(item.get("quantity_per_area") or 0),
+                    "maydon": float(item.get("maydon") or 0),
+                    "quantity_per_area": 0.0,
                 },
             )
             row["quantity"] += float(item.get("quantity") or 0)
+            row["maydon"] = max(row["maydon"], float(item.get("maydon") or 0))
+            row["quantity_per_area"] = row["quantity"] / row["maydon"] if row["maydon"] > 0 else 0.0
 
         data = sorted(
             grouped.values(),
