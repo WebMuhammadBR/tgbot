@@ -232,10 +232,11 @@ def aggregate_single_contract_type(data: list[dict]) -> list[dict]:
     grouped = {}
 
     for item in data:
+        farmer_id = item.get("id")
         district = item.get("district") or "-"
         massive = item.get("massive") or "-"
         farmer_name = (item.get("farmer_name") or item.get("name") or "-").strip() or "-"
-        key = (district, massive, farmer_name)
+        key = farmer_id if farmer_id is not None else (district, massive, farmer_name)
 
         row = grouped.setdefault(
             key,
@@ -256,10 +257,11 @@ def aggregate_all_contract_types(typed_data: dict[str, list[dict]]) -> list[dict
 
     for contract_type, rows in typed_data.items():
         for item in rows:
+            farmer_id = item.get("id")
             district = item.get("district") or "-"
             massive = item.get("massive") or "-"
             farmer_name = (item.get("farmer_name") or item.get("name") or "-").strip() or "-"
-            key = (district, massive, farmer_name)
+            key = farmer_id if farmer_id is not None else (district, massive, farmer_name)
 
             row = grouped.setdefault(
                 key,
@@ -305,4 +307,4 @@ def to_float(value) -> float:
 
 
 def format_tons(value) -> str:
-    return f"{to_float(value) / 1_000:,.1f}".replace(",", " ").replace(".", ",")
+    return f"{to_float(value):,.1f}".replace(",", " ").replace(".", ",")
