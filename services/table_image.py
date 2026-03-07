@@ -20,7 +20,29 @@ _ROW_ALT = "#f8fbff"
 _LOCAL_FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
 
+_BUNDLED_REGULAR_FONTS = [
+    "ARIAL.TTF",
+    "SEGOEUI.TTF",
+    "SEGOEUIL.TTF",
+    "SEGOEUII.TTF",
+    "SEGOEUIZ.TTF",
+    "SEGOEUISL.TTF",
+    "SEGOESC.TTF",
+    "SEGOEPR.TTF",
+]
+
+_BUNDLED_BOLD_FONTS = [
+    "ARIALBD.TTF",
+    "ARIBLK.TTF",
+    "SEGOEUIB.TTF",
+    "SEGUISB.TTF",
+    "SEGOESCB.TTF",
+    "SEGOEPRB.TTF",
+]
+
+
 _FONT_PATHS = [
+    *(_LOCAL_FONTS_DIR / font_name for font_name in _BUNDLED_REGULAR_FONTS),
     _LOCAL_FONTS_DIR / "NotoSans-Regular.ttf",
     _LOCAL_FONTS_DIR / "DejaVuSans.ttf",
     "DejaVuSans.ttf",
@@ -46,6 +68,7 @@ def _load_font(size: int, bold: bool = False):
     if bold:
         candidates.extend(
             [
+                *(_LOCAL_FONTS_DIR / font_name for font_name in _BUNDLED_BOLD_FONTS),
                 _LOCAL_FONTS_DIR / "NotoSans-Bold.ttf",
                 _LOCAL_FONTS_DIR / "DejaVuSans-Bold.ttf",
                 pil_fonts_dir / "NotoSans-Bold.ttf",
@@ -66,6 +89,7 @@ def _load_font(size: int, bold: bool = False):
 
     candidates.extend(
         [
+            *(_LOCAL_FONTS_DIR / font_name for font_name in _BUNDLED_REGULAR_FONTS),
             pil_fonts_dir / "NotoSans-Regular.ttf",
             pil_fonts_dir / "DejaVuSans.ttf",
         ]
