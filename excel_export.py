@@ -114,6 +114,7 @@ async def contracts_to_excel(data: list, contract_type: str = "all"):
                 "Туман": item["district"],
                 "Массив": item["massive"],
                 "Фермер": item["name"],
+                "ИНН": item.get("inn") or "-",
                 "Миқдор (тн)": float(item["quantity"]),
                 "Сумма": float(item["amount"]),
             }
