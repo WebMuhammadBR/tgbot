@@ -202,6 +202,7 @@ async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
                 "Юк хати №": item.get("number") or "-",
                 "Маҳсулот": item.get("product_name") or "-",
                 "Нархи": float(item.get("price") or 0),
+                "Миқдори": float(item.get("quantity") or 0),
                 "НДС ставкаси": item.get("vat_rate") or "0",
                 "Суммаси": float(item.get("amount") or 0),
                 "НДС суммаси": float(item.get("vat_amount") or 0),
