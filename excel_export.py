@@ -64,6 +64,7 @@ async def farmers_to_excel(data: list):
             "№": index,
             "Туман": farmer.get("district") or "-",
             "Массив": farmer.get("massive") or "-",
+            "ИНН": farmer.get("inn") or "-",
             "Фермер номи": farmer.get("name") or "-",
         }
 
@@ -74,7 +75,7 @@ async def farmers_to_excel(data: list):
         row["Жами"] = _as_int_amount(farmer.get("farmer_total_amount"))
         formatted.append(row)
 
-    totals_row = {"№": "", "Туман": "", "Массив": "", "Фермер номи": "Жами"}
+    totals_row = {"№": "", "Туман": "", "Массив": "", "ИНН": "", "Фермер номи": "Жами"}
     for product_name in all_products:
         totals_row[product_name] = _as_int_amount(sum(float((farmer.get("product_totals") or {}).get(product_name) or 0) for farmer in data))
     totals_row["Жами"] = _as_int_amount(sum(float(farmer.get("farmer_total_amount") or 0) for farmer in data))
@@ -166,33 +167,16 @@ async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
         return None
 
     if mode == "out":
-        grouped: dict[tuple[str, str, str, str], dict] = {}
-        for item in data:
-            district = (item.get("district_name") or "-").strip() or "-"
-            massive = (item.get("massive_name") or "-").strip() or "-"
-            farmer = (item.get("farmer_name") or "-").strip() or "-"
-            product = (item.get("product_name") or "-").strip() or "-"
-            key = (district, massive, farmer, product)
-
-            row = grouped.setdefault(
-                key,
-                {
-                    "district_name": district,
-                    "massive_name": massive,
-                    "farmer_name": farmer,
-                    "product_name": product,
-                    "quantity": 0.0,
-                    "maydon": float(item.get("maydon") or 0),
-                    "quantity_per_area": 0.0,
-                },
-            )
-            row["quantity"] += float(item.get("quantity") or 0)
-            row["maydon"] = max(row["maydon"], float(item.get("maydon") or 0))
-            row["quantity_per_area"] = row["quantity"] / row["maydon"] if row["maydon"] > 0 else 0.0
-
         data = sorted(
-            grouped.values(),
-            key=lambda row: (row["district_name"], row["massive_name"], row["farmer_name"], row["product_name"]),
+            data,
+            key=lambda row: (
+                row.get("district_name") or "-",
+                row.get("massive_name") or "-",
+                row.get("inn") or "-",
+                row.get("farmer_name") or "-",
+                row.get("number") or "-",
+                row.get("product_name") or "-",
+            ),
         )
 
     formatted = []
@@ -213,10 +197,15 @@ async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
                 "№": index,
                 "Туман": item.get("district_name") or "-",
                 "Массив": item.get("massive_name") or "-",
+                "ИНН": item.get("inn") or "-",
                 "Фермер номи": item.get("farmer_name") or "-",
+                "Юк хати №": item.get("number") or "-",
                 "Маҳсулот": item.get("product_name") or "-",
-                "Миқдори": float(item.get("quantity") or 0),
-                "Га/кг": round(float(item.get("quantity_per_area") or 0)),
+                "Нархи": float(item.get("price") or 0),
+                "НДС ставкаси": item.get("vat_rate") or "0",
+                "Суммаси": float(item.get("amount") or 0),
+                "НДС суммаси": float(item.get("vat_amount") or 0),
+                "Жами сумма": float(item.get("total_with_vat") or 0),
             }
         )
 
