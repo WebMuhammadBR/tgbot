@@ -16,6 +16,8 @@ _TEXT_COLOR = "#102a43"
 _MUTED_TEXT = "#486581"
 _BORDER = "#d9e2ec"
 _ROW_ALT = "#f8fbff"
+_BRAND_TEXT = "TETRATEX_bot"
+_BRAND_LINK = "https://t.me/TETRATEX_bot"
 
 _LOCAL_FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
@@ -113,10 +115,92 @@ def _text_size(draw, text: str, font) -> tuple[int, int]:
     return right - left, bottom - top
 
 
+def _fit_font_to_width(draw, text: str, *, target_width: int, max_size: int = 30, min_size: int = 10):
+    for size in range(max_size, min_size - 1, -1):
+        font = _load_font(size, bold=True)
+        width, _ = _text_size(draw, text, font)
+        if width <= target_width:
+            return font
+    return _load_font(min_size, bold=True)
+
+
 def _parse_cell(cell: Any) -> tuple[str, str | None]:
     if isinstance(cell, tuple) and len(cell) == 2:
         return str(cell[0]), str(cell[1])
     return str(cell), None
+
+
+def _build_qr_image(size: int):
+    from PIL import Image, ImageDraw
+
+    try:
+        import qrcode
+
+        qr = qrcode.QRCode(border=1, box_size=10)
+        qr.add_data(_BRAND_LINK)
+        qr.make(fit=True)
+        return qr.make_image(fill_color="black", back_color="white").convert("RGB").resize((size, size), Image.Resampling.NEAREST)
+    except ImportError:
+        fallback = Image.new("RGB", (size, size), "white")
+        fallback_draw = ImageDraw.Draw(fallback)
+        cell = max(4, size // 21)
+
+        def square(x0: int, y0: int, cells: int):
+            fallback_draw.rectangle((x0, y0, x0 + cells * cell, y0 + cells * cell), outline="black", width=cell)
+            fallback_draw.rectangle(
+                (x0 + 2 * cell, y0 + 2 * cell, x0 + (cells - 2) * cell, y0 + (cells - 2) * cell),
+                fill="black",
+            )
+
+        square(cell, cell, 7)
+        square(size - 8 * cell, cell, 7)
+        square(cell, size - 8 * cell, 7)
+
+        for y in range(10, 19, 2):
+            for x in range(10, 19, 2):
+                fallback_draw.rectangle((x * cell, y * cell, x * cell + cell, y * cell + cell), fill="black")
+
+        return fallback
+
+
+def _draw_branding(img, draw, *, side_padding: int, top_pad: int, image_width: int) -> None:
+    qr_size = 92
+    brand_font = _fit_font_to_width(draw, _BRAND_TEXT, target_width=qr_size, max_size=30, min_size=10)
+    text_w, text_h = _text_size(draw, _BRAND_TEXT, brand_font)
+    box_padding_x = 16
+    box_padding_y = 10
+    gap = 8
+
+    badge_w = box_padding_x * 2 + qr_size
+    badge_h = box_padding_y * 2 + qr_size + gap + text_h
+    badge_x = image_width - side_padding - badge_w
+    badge_y = top_pad
+
+    draw.rounded_rectangle(
+        (badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
+        radius=14,
+        fill="#ffffff",
+        outline=_BORDER,
+        width=2,
+    )
+
+    qr_image = _build_qr_image(qr_size)
+    qr_x = badge_x + (badge_w - qr_size) // 2
+    qr_y = badge_y + box_padding_y
+    img.paste(qr_image, (qr_x, qr_y))
+
+    text_x = badge_x + (badge_w - text_w) / 2
+    text_y = qr_y + qr_size + gap
+    draw.text((text_x, text_y), _BRAND_TEXT, font=brand_font, fill=_TITLE_COLOR)
+
+
+def _branding_badge_height(draw) -> int:
+    qr_size = 92
+    brand_font = _fit_font_to_width(draw, _BRAND_TEXT, target_width=qr_size, max_size=30, min_size=10)
+    _, text_h = _text_size(draw, _BRAND_TEXT, brand_font)
+    box_padding_y = 10
+    gap = 8
+    return box_padding_y * 2 + qr_size + gap + text_h
 
 
 def build_table_image(
@@ -222,14 +306,19 @@ def build_table_image(
         + (top_note_h + title_block_gap if top_note else 0)
         + text_gap
     )
+
+    # Reserve space for the QR branding badge so it cannot overlap the table header.
+    branding_bottom = top_pad + _branding_badge_height(draw) + text_gap
+    table_top = max(table_top, branding_bottom)
     row_count = max(1, len(rows), min_rows or 0)
     table_h = header_h + row_count * row_h
     image_height = table_top + table_h + footer_h + 44
 
-    img = Image.new("RGB", (image_width, image_height), _BG_COLOR)
+    img = Image.new("RGBA", (image_width, image_height), _BG_COLOR)
     draw = ImageDraw.Draw(img)
 
     draw.rounded_rectangle((12, 12, image_width - 12, image_height - 12), radius=18, fill=_CARD_COLOR, outline=_BORDER, width=2)
+    _draw_branding(img, draw, side_padding=side_padding, top_pad=top_pad, image_width=image_width)
 
     draw.text((side_padding, top_pad), title, font=title_font, fill=_TITLE_COLOR)
     subtitle_y = top_pad + title_h + title_block_gap
@@ -317,7 +406,7 @@ def build_table_image(
             y += _text_size(draw, line, footer_font)[1] + 12
 
     buf = BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.convert("RGB").save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
 
