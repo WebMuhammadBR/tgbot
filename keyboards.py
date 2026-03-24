@@ -34,7 +34,20 @@ warehouse_menu = ReplyKeyboardMarkup(
 
 
 def warehouse_names_menu(warehouse_names: list[str]):
-    rows = [[KeyboardButton(text=name)] for name in warehouse_names if name]
+    rows = []
+    current_row = []
+    for name in warehouse_names:
+        if not name:
+            continue
+        current_row.append(KeyboardButton(text=name))
+        if len(current_row) == 2:
+            rows.append(current_row)
+            current_row = []
+
+    if current_row:
+        rows.append(current_row)
+
+    rows.append([KeyboardButton(text="📊 Жами омбор")])
     rows.append([KeyboardButton(text="🏠 Асосий меню")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 

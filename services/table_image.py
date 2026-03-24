@@ -208,6 +208,8 @@ def build_table_image(
     title: str,
     columns: list[str],
     rows: list[list[Any]],
+    header_groups: list[dict[str, Any]] | None = None,
+    row_span_columns: int = 0,
     subtitle: str | None = None,
     subtitle_alignment: str = "left",
     top_note: str | None = None,
@@ -293,7 +295,9 @@ def build_table_image(
     top_note_alignment = top_note_alignment.lower()
     if top_note_alignment not in {"left", "center", "right"}:
         raise ValueError("top_note_alignment must be left, center or right")
-    header_h = _text_size(draw, "Ag", header_font)[1] + cell_padding_y * 2
+    header_row_h = _text_size(draw, "Ag", header_font)[1] + cell_padding_y * 2
+    has_grouped_header = bool(header_groups)
+    header_h = header_row_h * 2 if has_grouped_header else header_row_h
     row_h = _text_size(draw, "Ag", body_font)[1] + cell_padding_y * 2
     footer_h = (_text_size(draw, "Ag", footer_font)[1] + 12) * len(footer_lines or [])
 
@@ -352,19 +356,86 @@ def build_table_image(
     draw.rounded_rectangle((x, y, x + table_width, y + header_h), radius=12, fill=_HEADER_BG)
 
     cursor_x = x
-    for idx, col in enumerate(columns):
-        col_w, _ = _text_size(draw, col, header_font)
-        if alignments[idx] == "center":
-            text_x = cursor_x + (col_widths[idx] - col_w) / 2
-        elif alignments[idx] == "right":
-            text_x = cursor_x + col_widths[idx] - col_w - 16
-        else:
-            text_x = cursor_x + 16
+    if has_grouped_header:
+        split_y = y + header_row_h
+        split_start_x = x + sum(col_widths[:max(0, row_span_columns)])
+        if split_start_x < x + table_width:
+            draw.line((split_start_x, split_y, x + table_width, split_y), fill=_BORDER, width=1)
 
-        draw.text((text_x, y + cell_padding_y), col, font=header_font, fill=_HEADER_TEXT)
-        if idx > 0:
-            draw.line((cursor_x, y, cursor_x, y + table_h), fill=_BORDER, width=1)
-        cursor_x += col_widths[idx]
+        cumulative_widths = [x]
+        for width in col_widths:
+            cumulative_widths.append(cumulative_widths[-1] + width)
+
+        for idx in range(1, len(columns)):
+            line_top = y if idx <= row_span_columns else split_y
+            draw.line((cumulative_widths[idx], line_top, cumulative_widths[idx], y + table_h), fill=_BORDER, width=1)
+
+        group_boundary_idx = row_span_columns
+        for group in header_groups or []:
+            group_boundary_idx += int(group.get("span") or 0)
+            if group_boundary_idx >= len(columns):
+                continue
+            draw.line((cumulative_widths[group_boundary_idx], y, cumulative_widths[group_boundary_idx], y + table_h), fill=_BORDER, width=1)
+
+        cursor_x = x
+        for idx in range(min(row_span_columns, len(columns))):
+            col = columns[idx]
+            col_w, _ = _text_size(draw, col, header_font)
+            if alignments[idx] == "center":
+                text_x = cursor_x + (col_widths[idx] - col_w) / 2
+            elif alignments[idx] == "right":
+                text_x = cursor_x + col_widths[idx] - col_w - 16
+            else:
+                text_x = cursor_x + 16
+            text_y = y + (header_h - _text_size(draw, col, header_font)[1]) / 2
+            draw.text((text_x, text_y), col, font=header_font, fill=_HEADER_TEXT)
+            cursor_x += col_widths[idx]
+
+        group_start_idx = row_span_columns
+        cursor_x = x + sum(col_widths[:row_span_columns])
+        for group in header_groups or []:
+            span = int(group.get("span") or 0)
+            if span <= 0:
+                continue
+            group_width = sum(col_widths[group_start_idx:group_start_idx + span])
+            group_title = str(group.get("title") or "")
+            title_w, title_h_text = _text_size(draw, group_title, header_font)
+            draw.text(
+                (cursor_x + (group_width - title_w) / 2, y + (header_row_h - title_h_text) / 2),
+                group_title,
+                font=header_font,
+                fill=_HEADER_TEXT,
+            )
+            cursor_x += group_width
+            group_start_idx += span
+
+        cursor_x = x + sum(col_widths[:row_span_columns])
+        for idx in range(row_span_columns, len(columns)):
+            col = columns[idx]
+            col_w, _ = _text_size(draw, col, header_font)
+            if alignments[idx] == "center":
+                text_x = cursor_x + (col_widths[idx] - col_w) / 2
+            elif alignments[idx] == "right":
+                text_x = cursor_x + col_widths[idx] - col_w - 16
+            else:
+                text_x = cursor_x + 16
+
+            draw.text((text_x, y + header_row_h + cell_padding_y), col, font=header_font, fill=_HEADER_TEXT)
+            cursor_x += col_widths[idx]
+    else:
+        for idx, col in enumerate(columns):
+            col_w, _ = _text_size(draw, col, header_font)
+            if alignments[idx] == "center":
+                text_x = cursor_x + (col_widths[idx] - col_w) / 2
+            elif alignments[idx] == "right":
+                text_x = cursor_x + col_widths[idx] - col_w - 16
+            else:
+                text_x = cursor_x + 16
+
+            draw.text((text_x, y + cell_padding_y), col, font=header_font, fill=_HEADER_TEXT)
+            if idx > 0:
+                draw.line((cursor_x, y, cursor_x, y + table_h), fill=_BORDER, width=1)
+            cursor_x += col_widths[idx]
 
     y += header_h
     if rows:

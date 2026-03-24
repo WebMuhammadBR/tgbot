@@ -69,6 +69,12 @@ async def get_warehouses():
             return await resp.json()
 
 
+async def get_warehouse_summary():
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{API_BASE_URL}/warehouse/summary/") as resp:
+            return await resp.json()
+
+
 async def get_warehouse_totals_by_filters(
     warehouse_id: int | None = None,
     product_id: int | None = None,

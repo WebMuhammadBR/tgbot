@@ -18,6 +18,7 @@ from services.api_client import (
     get_warehouse_expense_districts,
     get_warehouse_movements,
     get_warehouse_products,
+    get_warehouse_summary,
     get_warehouse_totals_by_filters,
     get_warehouses,
 )
@@ -30,6 +31,7 @@ USER_SELECTED_WAREHOUSE: dict[int, int] = {}
 WAREHOUSE_RECEIPT_NAMES = {"📥 Кирим", "kirim", "krim", "кирим"}
 WAREHOUSE_EXPENSE_NAMES = {"📤 Чиқим", "chiqim", "чиқим"}
 WAREHOUSE_REPORT_NAMES = {"📊 Свод", "svod", "свод"}
+WAREHOUSE_TOTAL_NAME = "📊 Жами омбор"
 
 
 async def _edit_message_content(message: Message, text: str, reply_markup=None):
@@ -152,6 +154,62 @@ async def _warehouse_map():
     }
 
 
+def _warehouse_summary_table_config(summary: dict) -> tuple[list[str], list[int], list[str], list[list[str]], list[dict]]:
+    products = summary.get("products") or []
+    rows = summary.get("rows") or []
+    totals = summary.get("totals") or {"warehouse_name": "Жами", "products": []}
+
+    columns = ["№", "Омбор\u00a0номи"]
+    column_widths = [70, 250]
+    column_alignments = ["center", "left"]
+    header_groups = []
+
+    for product in products:
+        product_name = str(product.get("product_name") or "Маҳсулот")
+        header_groups.append({"title": product_name, "span": 3})
+        columns.extend(["Кирим", "Чиқим", "Қолдиқ"])
+        column_widths.extend([120, 120, 120])
+        column_alignments.extend(["center", "center", "center"])
+
+    table_rows: list[list[str]] = []
+    for row in rows:
+        line = [str(row.get("order") or ""), str(row.get("warehouse_name") or "-")]
+        products_data = {
+            int(item.get("product_id")): item
+            for item in row.get("products") or []
+            if item.get("product_id")
+        }
+        for product in products:
+            product_totals = products_data.get(int(product["product_id"]), {})
+            line.extend(
+                [
+                    _format_number_with_spaces(product_totals.get("total_in", 0), digits=0),
+                    _format_number_with_spaces(product_totals.get("total_out", 0), digits=0),
+                    _format_number_with_spaces(product_totals.get("balance", 0), digits=0),
+                ]
+            )
+        table_rows.append(line)
+
+    totals_data = {
+        int(item.get("product_id")): item
+        for item in totals.get("products") or []
+        if item.get("product_id")
+    }
+    totals_line = ["", str(totals.get("warehouse_name") or "Жами")]
+    for product in products:
+        product_totals = totals_data.get(int(product["product_id"]), {})
+        totals_line.extend(
+            [
+                _format_number_with_spaces(product_totals.get("total_in", 0), digits=0),
+                _format_number_with_spaces(product_totals.get("total_out", 0), digits=0),
+                _format_number_with_spaces(product_totals.get("balance", 0), digits=0),
+            ]
+        )
+    table_rows.append(totals_line)
+
+    return columns, column_widths, column_alignments, table_rows, header_groups
+
+
 @router.message(F.text.in_({"🌾 Минерал ўғит", "🏬 Омбор"}))
 @access_required
 async def mineral_menu_handler(message: Message):
@@ -174,6 +232,30 @@ async def back_to_warehouses_handler(message: Message):
         "🏬 Омборлар рўйхати 👇",
         reply_markup=warehouse_names_menu(list(warehouse_map.values())),
     )
+
+
+@router.message(F.text == WAREHOUSE_TOTAL_NAME)
+@access_required
+async def warehouse_total_summary_handler(message: Message):
+    summary = await get_warehouse_summary()
+    products = summary.get("products") or []
+    rows = summary.get("rows") or []
+    if not products or not rows:
+        await message.answer("📊 Жами омбор бўйича маълумот топилмади.")
+        return
+
+    columns, column_widths, column_alignments, table_rows, header_groups = _warehouse_summary_table_config(summary)
+    image_bytes = build_table_image(
+        title="🏬 Жами омборлар ҳисоботи",
+        columns=columns,
+        column_widths=column_widths,
+        column_alignments=column_alignments,
+        rows=table_rows,
+        header_groups=header_groups,
+        row_span_columns=2,
+        min_rows=len(table_rows),
+    )
+    await message.answer_photo(photo=BufferedInputFile(image_bytes, filename="warehouse_summary.png"))
 
 
 @router.message(F.text.func(lambda value: value and value.lower() in {name.lower() for name in WAREHOUSE_RECEIPT_NAMES}))
