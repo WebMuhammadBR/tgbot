@@ -10,6 +10,7 @@ from services.table_image import build_table_image, send_or_edit_table_image
 
 router = Router()
 PER_PAGE = 15
+FARMER_NAME_MAX_LENGTH = 22
 
 CONTRACT_TYPE_ALL = "all"
 CONTRACT_TYPE_MAP = {
@@ -24,6 +25,10 @@ CONTRACT_TYPE_LABELS = {
     "forward": "Форвард",
     "storage": "Сақлаш",
 }
+
+
+def _truncate_farmer_name(name: str | None) -> str:
+    return (name or "-")[:FARMER_NAME_MAX_LENGTH]
 
 
 @router.message(F.text == "📑 Шартномалар")
@@ -91,7 +96,7 @@ async def send_page(target, page, district_index, contract_type, edit):
                 str(index),
                 contract["district"],
                 contract["massive"],
-                contract["farmer_name"],
+                _truncate_farmer_name(contract["farmer_name"]),
                 format_tons(contract["futures"]),
                 format_tons(contract["forward"]),
                 format_tons(contract["storage"]),
@@ -124,7 +129,7 @@ async def send_page(target, page, district_index, contract_type, edit):
                 str(index),
                 contract["district"],
                 contract["massive"],
-                contract["farmer_name"],
+                _truncate_farmer_name(contract["farmer_name"]),
                 format_tons(contract["quantity"]),
             ]
             for index, contract in enumerate(page_data, start=start + 1)

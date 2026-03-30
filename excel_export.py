@@ -13,7 +13,11 @@ def _as_percent(value):
     return round(float(value or 0), 2)
 
 
+def _as_thousand_amount(value):
+    return round(float(value or 0) / 1000, 1)
+
 COTTON_PRICE = 7862
+PICKING_RATE = 2000
 
 def _excel_date(value):
     if not value:
@@ -81,12 +85,17 @@ async def farmers_to_excel(data: list):
             row[product_name] = _as_int_amount(product_totals.get(product_name))
 
         total_advance = float(farmer.get("farmer_total_amount") or 0)
+        futures_quantity = float(farmer.get("futures_quantity") or 0)
         futures_amount = float(farmer.get("futures_amount") or 0)
-        row["Жами"] = _as_int_amount(total_advance)
+        picking_fee = futures_quantity * PICKING_RATE
+        total_for_analysis = total_advance + picking_fee
+        row["Жами (минг сўм)"] = _as_thousand_amount(total_advance)
+        row["Терим пули (минг сўм)"] = _as_thousand_amount(picking_fee)
+        row["Жами (аванс + терим пули, минг сўм)"] = _as_thousand_amount(total_for_analysis)
         row["Жами аванс шартноманинг % ташкил қилади"] = _as_percent(
-            (total_advance / futures_amount * 100) if futures_amount > 0 else 0
+            (total_for_analysis / futures_amount * 100) if futures_amount > 0 else 0
         )
-        row["Авансни қоплаш учун лозим бўлган пахта миқдори"] = _as_int_amount(total_advance / COTTON_PRICE)
+        row["Авансни қоплаш учун лозим бўлган пахта миқдори"] = _as_int_amount(total_for_analysis / COTTON_PRICE)
         formatted.append(row)
 
     totals_row = {
@@ -100,12 +109,16 @@ async def farmers_to_excel(data: list):
     for product_name in all_products:
         totals_row[product_name] = _as_int_amount(sum(float((farmer.get("product_totals") or {}).get(product_name) or 0) for farmer in data))
     grand_total_advance = sum(float(farmer.get("farmer_total_amount") or 0) for farmer in data)
+    grand_total_picking_fee = sum(float(farmer.get("futures_quantity") or 0) for farmer in data) * PICKING_RATE
     grand_total_futures_amount = sum(float(farmer.get("futures_amount") or 0) for farmer in data)
-    totals_row["Жами"] = _as_int_amount(grand_total_advance)
+    grand_total_for_analysis = grand_total_advance + grand_total_picking_fee
+    totals_row["Жами (минг сўм)"] = _as_thousand_amount(grand_total_advance)
+    totals_row["Терим пули (минг сўм)"] = _as_thousand_amount(grand_total_picking_fee)
+    totals_row["Жами (аванс + терим пули, минг сўм)"] = _as_thousand_amount(grand_total_for_analysis)
     totals_row["Жами аванс шартноманинг % ташкил қилади"] = _as_percent(
-        (grand_total_advance / grand_total_futures_amount * 100) if grand_total_futures_amount > 0 else 0
+        (grand_total_for_analysis / grand_total_futures_amount * 100) if grand_total_futures_amount > 0 else 0
     )
-    totals_row["Авансни қоплаш учун лозим бўлган пахта миқдори"] = _as_int_amount(grand_total_advance / COTTON_PRICE)
+    totals_row["Авансни қоплаш учун лозим бўлган пахта миқдори"] = _as_int_amount(grand_total_for_analysis / COTTON_PRICE)
     formatted.append(totals_row)
 
     df = pd.DataFrame(formatted)

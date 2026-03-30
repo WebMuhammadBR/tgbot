@@ -26,6 +26,7 @@ from services.api_client import (
 router = Router()
 PER_PAGE = 10
 REPORT_PER_PAGE = 6
+FARMER_NAME_MAX_LENGTH = 22
 USER_SELECTED_WAREHOUSE: dict[int, int] = {}
 
 WAREHOUSE_RECEIPT_NAMES = {"📥 Кирим", "kirim", "krim", "кирим"}
@@ -551,7 +552,7 @@ async def _send_warehouse_movements_page(
                 str(index),
                 (item.get("district_name") or "-")[:16],
                 (item.get("massive_name") or "-")[:16],
-                (item.get("farmer_name") or "-")[:20],
+                (item.get("farmer_name") or "-")[:FARMER_NAME_MAX_LENGTH],
                 (item.get("product_name") or "-")[:16],
                 _format_number_with_spaces(item.get("quantity") or 0),
                 (
