@@ -8,6 +8,13 @@ from openpyxl.styles import Font
 def _as_int_amount(value):
     return int(float(value or 0))
 
+
+def _as_percent(value):
+    return round(float(value or 0), 2)
+
+
+COTTON_PRICE = 7862
+
 def _excel_date(value):
     if not value:
         return "-"
@@ -64,21 +71,41 @@ async def farmers_to_excel(data: list):
             "№": index,
             "Туман": farmer.get("district") or "-",
             "Массив": farmer.get("massive") or "-",
-            "ИНН": farmer.get("inn") or "-",
             "Фермер номи": farmer.get("name") or "-",
+            "Шартнома миқдори (фақат фючерс)": _as_int_amount(farmer.get("futures_quantity")),
+            "Шартнома суммаси": _as_int_amount(farmer.get("futures_amount")),
         }
 
         product_totals = farmer.get("product_totals") or {}
         for product_name in all_products:
             row[product_name] = _as_int_amount(product_totals.get(product_name))
 
-        row["Жами"] = _as_int_amount(farmer.get("farmer_total_amount"))
+        total_advance = float(farmer.get("farmer_total_amount") or 0)
+        futures_amount = float(farmer.get("futures_amount") or 0)
+        row["Жами"] = _as_int_amount(total_advance)
+        row["Жами аванс шартноманинг % ташкил қилади"] = _as_percent(
+            (total_advance / futures_amount * 100) if futures_amount > 0 else 0
+        )
+        row["Авансни қоплаш учун лозим бўлган пахта миқдори"] = _as_int_amount(total_advance / COTTON_PRICE)
         formatted.append(row)
 
-    totals_row = {"№": "", "Туман": "", "Массив": "", "ИНН": "", "Фермер номи": "Жами"}
+    totals_row = {
+        "№": "",
+        "Туман": "",
+        "Массив": "",
+        "Фермер номи": "Жами",
+        "Шартнома миқдори (фақат фючерс)": _as_int_amount(sum(float(farmer.get("futures_quantity") or 0) for farmer in data)),
+        "Шартнома суммаси": _as_int_amount(sum(float(farmer.get("futures_amount") or 0) for farmer in data)),
+    }
     for product_name in all_products:
         totals_row[product_name] = _as_int_amount(sum(float((farmer.get("product_totals") or {}).get(product_name) or 0) for farmer in data))
-    totals_row["Жами"] = _as_int_amount(sum(float(farmer.get("farmer_total_amount") or 0) for farmer in data))
+    grand_total_advance = sum(float(farmer.get("farmer_total_amount") or 0) for farmer in data)
+    grand_total_futures_amount = sum(float(farmer.get("futures_amount") or 0) for farmer in data)
+    totals_row["Жами"] = _as_int_amount(grand_total_advance)
+    totals_row["Жами аванс шартноманинг % ташкил қилади"] = _as_percent(
+        (grand_total_advance / grand_total_futures_amount * 100) if grand_total_futures_amount > 0 else 0
+    )
+    totals_row["Авансни қоплаш учун лозим бўлган пахта миқдори"] = _as_int_amount(grand_total_advance / COTTON_PRICE)
     formatted.append(totals_row)
 
     df = pd.DataFrame(formatted)

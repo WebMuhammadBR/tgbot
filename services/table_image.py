@@ -115,6 +115,53 @@ def _text_size(draw, text: str, font) -> tuple[int, int]:
     return right - left, bottom - top
 
 
+def _wrap_text_to_width(draw, text: str, font, max_width: int) -> list[str]:
+    if max_width <= 0:
+        return [text]
+
+    wrapped_lines: list[str] = []
+    for raw_line in str(text).splitlines() or [""]:
+        words = raw_line.split()
+        if not words:
+            wrapped_lines.append("")
+            continue
+
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            candidate_w, _ = _text_size(draw, candidate, font)
+            if candidate_w <= max_width:
+                current = candidate
+                continue
+            wrapped_lines.append(current)
+            current = word
+        wrapped_lines.append(current)
+
+    return wrapped_lines or [str(text)]
+
+
+def _draw_multiline_text(
+    draw,
+    lines: list[str],
+    *,
+    x: float,
+    y: float,
+    font,
+    fill: str,
+    line_gap: int = 4,
+    align: str = "left",
+    box_width: int | None = None,
+) -> None:
+    current_y = y
+    for line in lines:
+        line_x = x
+        if align == "center" and box_width is not None:
+            line_width, _ = _text_size(draw, line, font)
+            line_x = x + (box_width - line_width) / 2
+        draw.text((line_x, current_y), line, font=font, fill=fill)
+        current_y += _text_size(draw, line or "Ag", font)[1] + line_gap
+
+
 def _fit_font_to_width(draw, text: str, *, target_width: int, max_size: int = 30, min_size: int = 10):
     for size in range(max_size, min_size - 1, -1):
         font = _load_font(size, bold=True)
@@ -295,9 +342,43 @@ def build_table_image(
     top_note_alignment = top_note_alignment.lower()
     if top_note_alignment not in {"left", "center", "right"}:
         raise ValueError("top_note_alignment must be left, center or right")
-    header_row_h = _text_size(draw, "Ag", header_font)[1] + cell_padding_y * 2
     has_grouped_header = bool(header_groups)
-    header_h = header_row_h * 2 if has_grouped_header else header_row_h
+    header_line_h = _text_size(draw, "Ag", header_font)[1]
+    header_line_gap = 4
+
+    wrapped_column_headers = [
+        _wrap_text_to_width(draw, col, header_font, max(1, col_widths[idx] - 32))
+        for idx, col in enumerate(columns)
+    ]
+    row_span_column_count = min(max(0, row_span_columns), len(columns))
+
+    if has_grouped_header:
+        wrapped_group_titles = []
+        group_start_idx_for_wrap = row_span_column_count
+        for group in header_groups or []:
+            span = int(group.get("span") or 0)
+            group_width = sum(col_widths[group_start_idx_for_wrap:group_start_idx_for_wrap + max(0, span)])
+            wrapped_group_titles.append(
+                _wrap_text_to_width(draw, str(group.get("title") or ""), header_font, max(1, group_width - 32))
+            )
+            group_start_idx_for_wrap += max(0, span)
+
+        top_header_lines = max([1, *[len(lines) for lines in wrapped_group_titles]])
+        bottom_header_lines = max(
+            [
+                1,
+                *[len(wrapped_column_headers[idx]) for idx in range(row_span_column_count, len(columns))],
+            ]
+        )
+        header_top_h = top_header_lines * header_line_h + max(0, top_header_lines - 1) * header_line_gap + cell_padding_y * 2
+        header_bottom_h = bottom_header_lines * header_line_h + max(0, bottom_header_lines - 1) * header_line_gap + cell_padding_y * 2
+        header_h = header_top_h + header_bottom_h
+    else:
+        header_lines = max([1, *[len(lines) for lines in wrapped_column_headers]])
+        header_h = header_lines * header_line_h + max(0, header_lines - 1) * header_line_gap + cell_padding_y * 2
+        header_top_h = header_h
+        header_bottom_h = 0
+
     row_h = _text_size(draw, "Ag", body_font)[1] + cell_padding_y * 2
     footer_h = (_text_size(draw, "Ag", footer_font)[1] + 12) * len(footer_lines or [])
 
@@ -357,7 +438,7 @@ def build_table_image(
 
     cursor_x = x
     if has_grouped_header:
-        split_y = y + header_row_h
+        split_y = y + header_top_h
         split_start_x = x + sum(col_widths[:max(0, row_span_columns)])
         if split_start_x < x + table_width:
             draw.line((split_start_x, split_y, x + table_width, split_y), fill=_BORDER, width=1)
@@ -379,60 +460,78 @@ def build_table_image(
 
         cursor_x = x
         for idx in range(min(row_span_columns, len(columns))):
-            col = columns[idx]
-            col_w, _ = _text_size(draw, col, header_font)
-            if alignments[idx] == "center":
-                text_x = cursor_x + (col_widths[idx] - col_w) / 2
-            elif alignments[idx] == "right":
-                text_x = cursor_x + col_widths[idx] - col_w - 16
-            else:
-                text_x = cursor_x + 16
-            text_y = y + (header_h - _text_size(draw, col, header_font)[1]) / 2
-            draw.text((text_x, text_y), col, font=header_font, fill=_HEADER_TEXT)
+            wrapped_lines = wrapped_column_headers[idx]
+            text_block_h = len(wrapped_lines) * header_line_h + max(0, len(wrapped_lines) - 1) * header_line_gap
+            text_y = y + (header_h - text_block_h) / 2
+            _draw_multiline_text(
+                draw,
+                wrapped_lines,
+                x=cursor_x,
+                y=text_y,
+                font=header_font,
+                fill=_HEADER_TEXT,
+                line_gap=header_line_gap,
+                align="center",
+                box_width=col_widths[idx],
+            )
             cursor_x += col_widths[idx]
 
         group_start_idx = row_span_columns
         cursor_x = x + sum(col_widths[:row_span_columns])
-        for group in header_groups or []:
+        for group_idx, group in enumerate(header_groups or []):
             span = int(group.get("span") or 0)
             if span <= 0:
                 continue
             group_width = sum(col_widths[group_start_idx:group_start_idx + span])
-            group_title = str(group.get("title") or "")
-            title_w, title_h_text = _text_size(draw, group_title, header_font)
-            draw.text(
-                (cursor_x + (group_width - title_w) / 2, y + (header_row_h - title_h_text) / 2),
-                group_title,
+            wrapped_title_lines = wrapped_group_titles[group_idx]
+            title_block_h = len(wrapped_title_lines) * header_line_h + max(0, len(wrapped_title_lines) - 1) * header_line_gap
+            _draw_multiline_text(
+                draw,
+                wrapped_title_lines,
+                x=cursor_x,
+                y=y + (header_top_h - title_block_h) / 2,
                 font=header_font,
                 fill=_HEADER_TEXT,
+                line_gap=header_line_gap,
+                align="center",
+                box_width=group_width,
             )
             cursor_x += group_width
             group_start_idx += span
 
         cursor_x = x + sum(col_widths[:row_span_columns])
         for idx in range(row_span_columns, len(columns)):
-            col = columns[idx]
-            col_w, _ = _text_size(draw, col, header_font)
-            if alignments[idx] == "center":
-                text_x = cursor_x + (col_widths[idx] - col_w) / 2
-            elif alignments[idx] == "right":
-                text_x = cursor_x + col_widths[idx] - col_w - 16
-            else:
-                text_x = cursor_x + 16
+            wrapped_lines = wrapped_column_headers[idx]
+            text_block_h = len(wrapped_lines) * header_line_h + max(0, len(wrapped_lines) - 1) * header_line_gap
 
-            draw.text((text_x, y + header_row_h + cell_padding_y), col, font=header_font, fill=_HEADER_TEXT)
+            _draw_multiline_text(
+                draw,
+                wrapped_lines,
+                x=cursor_x,
+                y=y + header_top_h + (header_bottom_h - text_block_h) / 2,
+                font=header_font,
+                fill=_HEADER_TEXT,
+                line_gap=header_line_gap,
+                align="center",
+                box_width=col_widths[idx],
+            )
             cursor_x += col_widths[idx]
     else:
-        for idx, col in enumerate(columns):
-            col_w, _ = _text_size(draw, col, header_font)
-            if alignments[idx] == "center":
-                text_x = cursor_x + (col_widths[idx] - col_w) / 2
-            elif alignments[idx] == "right":
-                text_x = cursor_x + col_widths[idx] - col_w - 16
-            else:
-                text_x = cursor_x + 16
+        for idx in range(len(columns)):
+            wrapped_lines = wrapped_column_headers[idx]
+            text_block_h = len(wrapped_lines) * header_line_h + max(0, len(wrapped_lines) - 1) * header_line_gap
 
-            draw.text((text_x, y + cell_padding_y), col, font=header_font, fill=_HEADER_TEXT)
+            _draw_multiline_text(
+                draw,
+                wrapped_lines,
+                x=cursor_x,
+                y=y + (header_h - text_block_h) / 2,
+                font=header_font,
+                fill=_HEADER_TEXT,
+                line_gap=header_line_gap,
+                align="center",
+                box_width=col_widths[idx],
+            )
             if idx > 0:
                 draw.line((cursor_x, y, cursor_x, y + table_h), fill=_BORDER, width=1)
             cursor_x += col_widths[idx]

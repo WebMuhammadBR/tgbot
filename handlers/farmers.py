@@ -10,12 +10,25 @@ from services.table_image import build_table_image, send_or_edit_table_image
 
 router = Router()
 PER_PAGE = 15
+COTTON_PRICE = 7862
 
 
 def _format_amount(value) -> str:
     amount = float(value or 0)
     amount_in_thousands = amount / 1000
     return f"{amount_in_thousands:,.1f}".replace(",", " ").replace(".", ",")
+
+
+def _format_percent(value) -> str:
+    return f"{float(value or 0):.1f}%".replace(".", ",")
+
+
+def _to_float(value) -> float:
+    return float(value or 0)
+
+
+def _highlight_if_exceeds(value_text: str, current_value: float, limit_value: float) -> tuple[str, str] | str:
+    return (value_text, "#d62828") if current_value > limit_value else value_text
 
 
 def _rows_with_dynamic_products(data: list[dict], start_index: int):
@@ -36,9 +49,19 @@ def _rows_with_dynamic_products(data: list[dict], start_index: int):
             farmer.get("district") or "-",
             farmer.get("massive") or "-",
             farmer.get("name") or "-",
+            _format_amount(farmer.get("futures_quantity")),
+            _format_amount(farmer.get("futures_amount")),
         ]
         row.extend(_format_amount(product_totals.get(product_name)) for product_name in product_names)
-        row.append(_format_amount(farmer.get("farmer_total_amount")))
+
+        total_advance_amount = _to_float(farmer.get("farmer_total_amount"))
+        futures_amount = _to_float(farmer.get("futures_amount"))
+        advance_percent = (total_advance_amount / futures_amount * 100) if futures_amount > 0 else 0
+        required_cotton_qty = total_advance_amount / COTTON_PRICE if COTTON_PRICE else 0
+
+        row.append(_format_amount(total_advance_amount))
+        row.append(_highlight_if_exceeds(_format_percent(advance_percent), advance_percent, 60))
+        row.append(_highlight_if_exceeds(_format_amount(required_cotton_qty), required_cotton_qty, _to_float(farmer.get("futures_quantity"))))
         rows.append(row)
 
     return product_names, rows
@@ -94,18 +117,57 @@ async def send_page(target, page, district_index, edit):
 
     product_names, rows = _rows_with_dynamic_products(page_data, start + 1)
 
-    columns = ["№", "Туман", "Массив", "Фермер номи", *product_names, "Жами"]
-    column_widths = [80, 160, 160, 360, *([180] * len(product_names)), 170]
-    column_alignments = ["center", "left", "left", "left", *(["center"] * len(product_names)), "center"]
+    columns = [
+        "№",
+        "Туман",
+        "Массив",
+        "Фермер номи",
+        "Шартнома миқдори",
+        "Шартнома суммаси",
+        *product_names,
+        "Жами",
+        "Берилган бўнак \nшартноманинг (%) ни ташкил қилади",
+        "Бўнакни қоплаш учун лозим бўлган пахта миқдори",
+    ]
+    column_widths = [80, 160, 160, 360, 220, 210, *([180] * len(product_names)), 170, 230, 230]
+    column_alignments = [
+        "center",
+        "center",
+        "center",
+        "left",
+        "center",
+        "center",
+        *( ["center"] * len(product_names)),
+        "center",
+        "center",
+        "center",
+    ]
 
     totals_by_product = []
     for product_name in product_names:
         total_value = sum(float((item.get("product_totals") or {}).get(product_name) or 0) for item in filtered_data)
         totals_by_product.append(_format_amount(total_value))
 
-    grand_total = sum(float(item.get("farmer_total_amount") or 0) for item in filtered_data)
+    grand_total = sum(_to_float(item.get("farmer_total_amount")) for item in filtered_data)
+    futures_quantity_total = sum(_to_float(item.get("futures_quantity")) for item in filtered_data)
+    futures_amount_total = sum(_to_float(item.get("futures_amount")) for item in filtered_data)
+    total_advance_percent = (grand_total / futures_amount_total * 100) if futures_amount_total > 0 else 0
+    total_required_cotton_qty = grand_total / COTTON_PRICE if COTTON_PRICE else 0
 
-    rows.append(["", "", "", "Жами", *totals_by_product, _format_amount(grand_total)])
+    rows.append(
+        [
+            "",
+            "",
+            "",
+            "Жами",
+            _format_amount(futures_quantity_total),
+            _format_amount(futures_amount_total),
+            *totals_by_product,
+            _format_amount(grand_total),
+            _highlight_if_exceeds(_format_percent(total_advance_percent), total_advance_percent, 60),
+            _highlight_if_exceeds(_format_amount(total_required_cotton_qty), total_required_cotton_qty, futures_quantity_total),
+        ]
+    )
 
     image_bytes = build_table_image(
         title="📋 Фермер Баланс",
@@ -113,6 +175,11 @@ async def send_page(target, page, district_index, edit):
         top_note="Минг сўмда",
         top_note_alignment="left",
         top_note_color="#d62828",
+        header_groups=[
+            {"title": "Берилган аванс", "span": len(product_names) + 1},
+            {"title": "Таҳлил", "span": 2},
+        ],
+        row_span_columns=6,
         columns=columns,
         column_widths=column_widths,
         column_alignments=column_alignments,
