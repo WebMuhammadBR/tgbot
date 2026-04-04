@@ -40,6 +40,36 @@ def _excel_date(value):
     return date_text[:10]
 
 
+def _excel_date_sort_key(value):
+    date_text = str(value or "").strip()
+    if not date_text:
+        return datetime.min
+
+    normalized = date_text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).replace(tzinfo=None)
+    except ValueError:
+        pass
+
+    for date_format in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(date_text[:10], date_format)
+        except ValueError:
+            continue
+
+    return datetime.min
+
+
+def _excel_date_rank(value):
+    parsed = _excel_date_sort_key(value)
+    return (
+        parsed.toordinal() * 86400
+        + parsed.hour * 3600
+        + parsed.minute * 60
+        + parsed.second
+    )
+
+
 def _autosize_and_bold(worksheet):
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
@@ -176,6 +206,8 @@ async def warehouse_receipts_to_excel(data: list[dict]):
     if not data:
         return None
 
+    data = sorted(data, key=lambda row: _excel_date_sort_key(row.get("date")), reverse=True)
+
     formatted = []
     for index, item in enumerate(data, start=1):
         formatted.append(
@@ -202,7 +234,7 @@ async def warehouse_receipts_to_excel(data: list[dict]):
     return buffer
 
 
-async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
+async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out", include_warehouse_name: bool = False):
     if not data:
         return None
 
@@ -210,6 +242,7 @@ async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
         data = sorted(
             data,
             key=lambda row: (
+                -_excel_date_rank(row.get("date")),
                 row.get("district_name") or "-",
                 row.get("massive_name") or "-",
                 row.get("inn") or "-",
@@ -232,23 +265,25 @@ async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
             )
             continue
 
-        formatted.append(
-            {
-                "№": index,
-                "Туман": item.get("district_name") or "-",
-                "Массив": item.get("massive_name") or "-",
-                "ИНН": item.get("inn") or "-",
-                "Фермер номи": item.get("farmer_name") or "-",
-                "Юк хати №": item.get("number") or "-",
-                "Маҳсулот": item.get("product_name") or "-",
-                "Нархи": float(item.get("price") or 0),
-                "Миқдори": float(item.get("quantity") or 0),
-                "НДС ставкаси": item.get("vat_rate") or "0",
-                "Суммаси": float(item.get("amount") or 0),
-                "НДС суммаси": float(item.get("vat_amount") or 0),
-                "Жами сумма": float(item.get("total_with_vat") or 0),
-            }
-        )
+        line = {
+            "№": index,
+            "Сана": _excel_date(item.get("date")),
+            "Туман": item.get("district_name") or "-",
+            "Массив": item.get("massive_name") or "-",
+            "ИНН": item.get("inn") or "-",
+            "Фермер номи": item.get("farmer_name") or "-",
+            "Юк хати №": item.get("number") or "-",
+            "Маҳсулот": item.get("product_name") or "-",
+            "Нархи": float(item.get("price") or 0),
+            "Миқдори": float(item.get("quantity") or 0),
+            "НДС ставкаси": item.get("vat_rate") or "0",
+            "Суммаси": float(item.get("amount") or 0),
+            "НДС суммаси": float(item.get("vat_amount") or 0),
+            "Жами сумма": float(item.get("total_with_vat") or 0),
+        }
+        if include_warehouse_name:
+            line["Омбор номи"] = item.get("warehouse_name") or "-"
+        formatted.append(line)
 
     df = pd.DataFrame(formatted)
     buffer = BytesIO()
@@ -256,6 +291,62 @@ async def warehouse_expenses_to_excel(data: list[dict], mode: str = "out"):
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="WarehouseExpenses")
         _autosize_and_bold(writer.sheets["WarehouseExpenses"])
+
+    buffer.seek(0)
+    return buffer
+
+
+async def warehouse_summary_to_excel(summary: dict):
+    products = summary.get("products") or []
+    rows = summary.get("rows") or []
+    totals = summary.get("totals") or {"warehouse_name": "Жами", "products": []}
+
+    if not products or not rows:
+        return None
+
+    formatted = []
+    for row in rows:
+        line = {
+            "№": row.get("order") or "",
+            "Омбор номи": row.get("warehouse_name") or "-",
+        }
+        product_rows = {
+            int(item.get("product_id")): item
+            for item in row.get("products") or []
+            if item.get("product_id")
+        }
+        for product in products:
+            product_id = int(product.get("product_id"))
+            product_name = product.get("product_name") or "Маҳсулот"
+            product_totals = product_rows.get(product_id, {})
+            line[f"{product_name} (Кирим)"] = float(product_totals.get("total_in") or 0)
+            line[f"{product_name} (Чиқим)"] = float(product_totals.get("total_out") or 0)
+            line[f"{product_name} (Қолдиқ)"] = float(product_totals.get("balance") or 0)
+        formatted.append(line)
+
+    totals_line = {
+        "№": "",
+        "Омбор номи": totals.get("warehouse_name") or "Жами",
+    }
+    product_totals_map = {
+        int(item.get("product_id")): item
+        for item in totals.get("products") or []
+        if item.get("product_id")
+    }
+    for product in products:
+        product_id = int(product.get("product_id"))
+        product_name = product.get("product_name") or "Маҳсулот"
+        product_totals = product_totals_map.get(product_id, {})
+        totals_line[f"{product_name} (Кирим)"] = float(product_totals.get("total_in") or 0)
+        totals_line[f"{product_name} (Чиқим)"] = float(product_totals.get("total_out") or 0)
+        totals_line[f"{product_name} (Қолдиқ)"] = float(product_totals.get("balance") or 0)
+    formatted.append(totals_line)
+
+    df = pd.DataFrame(formatted)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="WarehouseSummary")
+        _autosize_and_bold(writer.sheets["WarehouseSummary"])
 
     buffer.seek(0)
     return buffer

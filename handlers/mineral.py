@@ -1,9 +1,9 @@
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from datetime import date, datetime
 
-from excel_export import warehouse_expenses_to_excel, warehouse_receipts_to_excel
+from excel_export import warehouse_expenses_to_excel, warehouse_receipts_to_excel, warehouse_summary_to_excel
 from keyboards import (
     warehouse_expense_districts_inline_keyboard,
     warehouse_movement_menu,
@@ -26,8 +26,9 @@ from services.api_client import (
 router = Router()
 PER_PAGE = 10
 REPORT_PER_PAGE = 6
-FARMER_NAME_MAX_LENGTH = 22
+FARMER_NAME_MAX_LENGTH = 20
 USER_SELECTED_WAREHOUSE: dict[int, int] = {}
+TOTAL_WAREHOUSE_ID = 0
 
 WAREHOUSE_RECEIPT_NAMES = {"📥 Кирим", "kirim", "krim", "кирим"}
 WAREHOUSE_EXPENSE_NAMES = {"📤 Чиқим", "chiqim", "чиқим"}
@@ -88,6 +89,27 @@ def _date_key(value) -> str:
     return date_text[:10]
 
 
+def _date_sort_key(value):
+    date_text = _date_key(value)
+    if not date_text:
+        return datetime.min
+
+    try:
+        return datetime.strptime(date_text, "%Y-%m-%d")
+    except ValueError:
+        return datetime.min
+
+
+def _date_rank(value) -> int:
+    parsed = _date_sort_key(value)
+    return (
+        parsed.toordinal() * 86400
+        + parsed.hour * 3600
+        + parsed.minute * 60
+        + parsed.second
+    )
+
+
 def _format_number_with_spaces(value, digits: int = 0) -> str:
     formatted = f"{float(value or 0):,.{digits}f}"
     return formatted.replace(",", " ")
@@ -113,20 +135,24 @@ def _report_rows_by_district(items: list[dict]) -> list[dict]:
 
 
 def _aggregate_expense_rows_by_farmer(items: list[dict]) -> list[dict]:
-    grouped: dict[tuple[str, str, str, str], dict] = {}
+    grouped: dict[tuple[str, str, str, str, str], dict] = {}
 
     for item in items:
+        date_key = _date_key(item.get("date"))
+        date_text = _format_date_ddmmyyyy(item.get("date"))
         district_name = (item.get("district_name") or "-").strip() or "-"
         massive_name = (item.get("massive_name") or "-").strip() or "-"
         farmer_name = (item.get("farmer_name") or "-").strip() or "-"
         product_name = (item.get("product_name") or "-").strip() or "-"
 
-        key = (district_name, massive_name, farmer_name, product_name)
+        key = (date_key, district_name, massive_name, farmer_name, product_name)
         quantity = float(item.get("quantity") or 0)
 
         row = grouped.setdefault(
             key,
             {
+                "date_key": date_key,
+                "date": date_text,
                 "district_name": district_name,
                 "massive_name": massive_name,
                 "farmer_name": farmer_name,
@@ -142,7 +168,13 @@ def _aggregate_expense_rows_by_farmer(items: list[dict]) -> list[dict]:
 
     return sorted(
         grouped.values(),
-        key=lambda row: (row["district_name"], row["massive_name"], row["farmer_name"], row["product_name"]),
+        key=lambda row: (
+            -_date_rank(row.get("date_key")),
+            row["district_name"],
+            row["massive_name"],
+            row["farmer_name"],
+            row["product_name"],
+        ),
     )
 
 
@@ -153,6 +185,46 @@ async def _warehouse_map():
         for item in warehouses
         if item.get("id") and str(item.get("name", "")).strip()
     }
+
+
+def _warehouse_display_name(warehouse_id: int, warehouse_map: dict[int, str]) -> str:
+    if warehouse_id == TOTAL_WAREHOUSE_ID:
+        return "Жами омборлар"
+    return warehouse_map.get(warehouse_id, "Омбор")
+
+
+async def _send_total_warehouse_summary(message: Message):
+    summary = await get_warehouse_summary()
+    products = summary.get("products") or []
+    rows = summary.get("rows") or []
+    if not products or not rows:
+        await message.answer("📊 Жами омбор бўйича маълумот топилмади.")
+        return
+
+    columns, column_widths, column_alignments, table_rows, header_groups = _warehouse_summary_table_config(summary)
+    image_bytes = build_table_image(
+        title="🏬 Жами омборлар ҳисоботи",
+        columns=columns,
+        column_widths=column_widths,
+        column_alignments=column_alignments,
+        rows=table_rows,
+        header_groups=header_groups,
+        row_span_columns=2,
+        min_rows=len(table_rows),
+    )
+    await message.answer_photo(
+        photo=BufferedInputFile(image_bytes, filename="warehouse_summary.png"),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📥 Excel",
+                        callback_data="warehouse_export_total_summary",
+                    )
+                ]
+            ]
+        ),
+    )
 
 
 def _warehouse_summary_table_config(summary: dict) -> tuple[list[str], list[int], list[str], list[list[str]], list[dict]]:
@@ -211,6 +283,25 @@ def _warehouse_summary_table_config(summary: dict) -> tuple[list[str], list[int]
     return columns, column_widths, column_alignments, table_rows, header_groups
 
 
+@router.callback_query(F.data == "warehouse_export_total_summary")
+@access_required
+async def warehouse_export_total_summary_handler(callback: CallbackQuery):
+    summary = await get_warehouse_summary()
+    file_buffer = await warehouse_summary_to_excel(summary)
+    if not file_buffer:
+        await callback.answer("Маълумот топилмади", show_alert=True)
+        return
+
+    await callback.message.answer_document(
+        document=BufferedInputFile(
+            file_buffer.getvalue(),
+            filename="warehouse_total_summary.xlsx",
+        ),
+        caption="📊 Жами омборлар своди (Excel)",
+    )
+    await callback.answer()
+
+
 @router.message(F.text.in_({"🌾 Минерал ўғит", "🏬 Омбор"}))
 @access_required
 async def mineral_menu_handler(message: Message):
@@ -238,25 +329,11 @@ async def back_to_warehouses_handler(message: Message):
 @router.message(F.text == WAREHOUSE_TOTAL_NAME)
 @access_required
 async def warehouse_total_summary_handler(message: Message):
-    summary = await get_warehouse_summary()
-    products = summary.get("products") or []
-    rows = summary.get("rows") or []
-    if not products or not rows:
-        await message.answer("📊 Жами омбор бўйича маълумот топилмади.")
-        return
-
-    columns, column_widths, column_alignments, table_rows, header_groups = _warehouse_summary_table_config(summary)
-    image_bytes = build_table_image(
-        title="🏬 Жами омборлар ҳисоботи",
-        columns=columns,
-        column_widths=column_widths,
-        column_alignments=column_alignments,
-        rows=table_rows,
-        header_groups=header_groups,
-        row_span_columns=2,
-        min_rows=len(table_rows),
+    USER_SELECTED_WAREHOUSE[message.from_user.id] = TOTAL_WAREHOUSE_ID
+    await message.answer(
+        "🏬 Жами омборлар\nКеракли бўлимни танланг:",
+        reply_markup=warehouse_movement_menu(),
     )
-    await message.answer_photo(photo=BufferedInputFile(image_bytes, filename="warehouse_summary.png"))
 
 
 @router.message(F.text.func(lambda value: value and value.lower() in {name.lower() for name in WAREHOUSE_RECEIPT_NAMES}))
@@ -264,11 +341,11 @@ async def warehouse_total_summary_handler(message: Message):
 async def warehouse_receipt_products_handler(message: Message):
     warehouse_map = await _warehouse_map()
     warehouse_id = USER_SELECTED_WAREHOUSE.get(message.from_user.id)
-    if not warehouse_id:
+    if warehouse_id is None:
         await message.answer("Аввал омборни танланг", reply_markup=warehouse_names_menu(list(warehouse_map.values())))
         return
 
-    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    warehouse_name = _warehouse_display_name(warehouse_id, warehouse_map)
     products = await get_warehouse_products(warehouse_id=warehouse_id, movement="in")
     if not products:
         await message.answer(f"🏬 {warehouse_name}\n\n📥 Кирим бўйича маълумот топилмади.")
@@ -292,11 +369,15 @@ async def warehouse_receipt_products_handler(message: Message):
 async def warehouse_report_districts_handler(message: Message):
     warehouse_map = await _warehouse_map()
     warehouse_id = USER_SELECTED_WAREHOUSE.get(message.from_user.id)
-    if not warehouse_id:
+    if warehouse_id is None:
         await message.answer("Аввал омборни танланг", reply_markup=warehouse_names_menu(list(warehouse_map.values())))
         return
 
-    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    if warehouse_id == TOTAL_WAREHOUSE_ID:
+        await _send_total_warehouse_summary(message)
+        return
+
+    warehouse_name = _warehouse_display_name(warehouse_id, warehouse_map)
     products = await get_warehouse_products(warehouse_id=warehouse_id, movement="out")
     if not products:
         await message.answer(f"🏬 {warehouse_name}\n\n📊 Свод бўйича маълумот топилмади.")
@@ -318,11 +399,11 @@ async def warehouse_report_districts_handler(message: Message):
 async def warehouse_expense_districts_handler(message: Message):
     warehouse_map = await _warehouse_map()
     warehouse_id = USER_SELECTED_WAREHOUSE.get(message.from_user.id)
-    if not warehouse_id:
+    if warehouse_id is None:
         await message.answer("Аввал омборни танланг", reply_markup=warehouse_names_menu(list(warehouse_map.values())))
         return
 
-    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    warehouse_name = _warehouse_display_name(warehouse_id, warehouse_map)
     districts = await get_warehouse_expense_districts(warehouse_id=warehouse_id)
     if not districts:
         await message.answer(f"🏬 {warehouse_name}\n\nЧиқим бўйича туманлар топилмади.")
@@ -359,7 +440,7 @@ async def warehouse_back_sections_handler(callback: CallbackQuery):
     _, warehouse_id = callback.data.split(":", maxsplit=1)
     warehouse_id = int(warehouse_id)
     warehouse_map = await _warehouse_map()
-    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    warehouse_name = _warehouse_display_name(warehouse_id, warehouse_map)
 
     await _edit_message_content(
         callback.message,
@@ -377,7 +458,7 @@ async def warehouse_expense_district_handler(callback: CallbackQuery):
     district_id = int(district_id)
 
     warehouse_map = await _warehouse_map()
-    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    warehouse_name = _warehouse_display_name(warehouse_id, warehouse_map)
     movement = "report" if section == "report" else "out"
     await _send_warehouse_products_page(
         message=callback.message,
@@ -396,7 +477,7 @@ async def warehouse_back_to_districts_handler(callback: CallbackQuery):
     warehouse_id = int(parts[1])
     section = parts[2] if len(parts) > 2 else "out"
     warehouse_map = await _warehouse_map()
-    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    warehouse_name = _warehouse_display_name(warehouse_id, warehouse_map)
     districts = await get_warehouse_expense_districts(warehouse_id=warehouse_id)
 
     if section == "report":
@@ -420,7 +501,7 @@ async def warehouse_back_to_products_handler(callback: CallbackQuery):
     district_id = int(district_id)
 
     warehouse_map = await _warehouse_map()
-    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    warehouse_name = _warehouse_display_name(warehouse_id, warehouse_map)
     await _send_warehouse_products_page(
         message=callback.message,
         warehouse_id=warehouse_id,
@@ -491,8 +572,9 @@ async def _send_warehouse_movements_page(
         product_id=product_id,
         district_id=None if district_id == 0 else district_id,
     )
+    movements = sorted(movements, key=lambda item: _date_sort_key(item.get("date")), reverse=True)
     warehouse_map = await _warehouse_map()
-    warehouse_name = warehouse_map.get(warehouse_id, "Омбор")
+    warehouse_name = _warehouse_display_name(warehouse_id, warehouse_map)
 
     products = await get_warehouse_products(
         warehouse_id=warehouse_id,
@@ -521,15 +603,15 @@ async def _send_warehouse_movements_page(
 
     footer_lines = None
     report_rows: list[dict] = []
-    expense_rows: list[dict] = []
 
     if movement == "in":
         table_title = "📥 Кирим деталлари"
-        columns = ["№", "Юк-хати №", "Маҳсулот", "Транспорт №", "Қоп сони", "Миқдори", "Омбор"]
-        column_widths = [80, 170, 220, 180, 150, 150, 210]
+        columns = ["№", "Сана", "Юк-хати №", "Маҳсулот", "Транспорт №", "Қоп сони", "Миқдори", "Омбор"]
+        column_widths = [70, 130, 150, 180, 150, 120, 130, 170]
         rows = [
             [
                 str(index),
+                _format_date_ddmmyyyy(item.get("date")),
                 str(item.get("invoice_number") or "-"),
                 str(item.get("product_name") or "-"),
                 str(item.get("transport_number") or "-"),
@@ -539,29 +621,32 @@ async def _send_warehouse_movements_page(
             ]
             for index, item in enumerate(page_items, start=start + 1)
         ]
-        column_alignments = ["center", "center", "left", "center", "center", "center", "left"]
+        column_alignments = ["center", "center", "center", "left", "center", "center", "center", "left"]
     elif movement == "out":
-        expense_rows = _aggregate_expense_rows_by_farmer(movements)
-        page_items = expense_rows[start:end]
+        page_items = movements[start:end]
         table_title = "📤 Чиқим деталлари"
-        columns = ["№", "Туман", "Массив", "Фермер номи", "Маҳсулот", "Миқдори", "Га/кг"]
-        column_widths = [70, 150, 160, 320, 180, 150, 150]
-        column_alignments = ["center", "left", "left", "left", "left", "center", "center"]
+        include_warehouse_name = warehouse_id == TOTAL_WAREHOUSE_ID
+        columns = ["№", "Сана", "Туман", "Массив", "Фермер номи", "Юк-№", "Маҳсулот", "Миқдори"]
+        column_widths = [70, 130, 130, 130, 330, 120, 160, 120]
+        column_alignments = ["center", "center", "left", "left", "left", "center", "left", "center"]
+        if include_warehouse_name:
+            columns.append("Омбор")
+            column_widths.append(180)
+            column_alignments.append("left")
         rows = [
-            [
-                str(index),
-                (item.get("district_name") or "-")[:16],
-                (item.get("massive_name") or "-")[:16],
-                (item.get("farmer_name") or "-")[:FARMER_NAME_MAX_LENGTH],
-                (item.get("product_name") or "-")[:16],
-                _format_number_with_spaces(item.get("quantity") or 0),
-                (
-                    _format_number_with_spaces(item.get("quantity_per_area") or 0),
-                    "#d62828",
-                )
-                if float(item.get("quantity_per_area") or 0) > 302
-                else _format_number_with_spaces(item.get("quantity_per_area") or 0),
-            ]
+            (
+                [
+                    str(index),
+                    _format_date_ddmmyyyy(item.get("date")),
+                    (item.get("district_name") or "-")[:16],
+                    (item.get("massive_name") or "-")[:16],
+                    (item.get("farmer_name") or "-")[:FARMER_NAME_MAX_LENGTH],
+                    str(item.get("number") or "-")[:14],
+                    (item.get("product_name") or "-")[:16],
+                    _format_number_with_spaces(item.get("quantity") or 0),
+                ]
+                + ([str(item.get("warehouse_name") or "-")] if include_warehouse_name else [])
+            )
             for index, item in enumerate(page_items, start=start + 1)
         ]
     else:
@@ -629,7 +714,7 @@ async def _send_warehouse_movements_page(
         has_next=end < (
             len(report_rows)
             if movement == "report"
-            else (len(expense_rows) if movement == "out" else len(movements))
+            else len(movements)
         ),
         back_callback=back_callback,
     )
@@ -702,7 +787,10 @@ async def warehouse_export_filtered_handler(callback: CallbackQuery):
         file_buffer = await warehouse_expenses_to_excel(_report_rows_by_district(data), mode="report")
         filename = "warehouse_report.xlsx"
     else:
-        file_buffer = await warehouse_expenses_to_excel(data)
+        file_buffer = await warehouse_expenses_to_excel(
+            data,
+            include_warehouse_name=int(warehouse_id) == TOTAL_WAREHOUSE_ID,
+        )
         filename = "warehouse_expenses.xlsx"
 
     if not file_buffer:
@@ -741,7 +829,10 @@ async def warehouse_export_handler(callback: CallbackQuery):
         file_buffer = await warehouse_expenses_to_excel(_report_rows_by_district(data), mode="report")
         filename = "warehouse_report.xlsx"
     else:
-        file_buffer = await warehouse_expenses_to_excel(data)
+        file_buffer = await warehouse_expenses_to_excel(
+            data,
+            include_warehouse_name=warehouse_id == TOTAL_WAREHOUSE_ID,
+        )
         filename = "warehouse_expenses.xlsx"
 
     if not file_buffer:
